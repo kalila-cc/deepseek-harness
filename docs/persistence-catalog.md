@@ -389,6 +389,23 @@ Types: [ContentBlock](subsystems/core.md) · [TokenUsage](subsystems/llm-streami
 
 Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compaction/compaction/src/types.ts)
 
+### `conductor/*`
+
+<a id="conductorchange--log-only"></a>
+
+#### `conductor/change` — log-only
+
+```ts persistence-catalog
+/**
+ * Complete post-mutation board state or clear tombstone. The same
+ * handover change payload is appended to both the retiring and the
+ * successor conductor session.
+ */
+'conductor/change': ConductorChangeMeta
+```
+
+Source: [`packages/conductor/conductor/src/domain.ts:101`](../packages/conductor/conductor/src/domain.ts)
+
 ### `feedback/*`
 
 <a id="feedbackrecord--log-only"></a>

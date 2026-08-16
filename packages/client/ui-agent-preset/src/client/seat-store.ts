@@ -14,8 +14,8 @@ import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   createSnapshotStore, type SessionId, type SnapshotStore,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import { messageOf, presetOptions } from './settings-store.ts'
-import type { AgentPresetOption } from './settings-store.ts'
+import { conductorModeOf, messageOf, presetOptions, writeConductorMode } from './settings-store.ts'
+import type { AgentPresetOption, ConductorMode } from './settings-store.ts'
 
 /** Hero-chip snapshot. */
 export interface AgentPresetSeatState {
@@ -32,10 +32,16 @@ export interface AgentPresetSeatState {
    * chip); the renderer clears it via `introduced()` once played.
    */
   introduce: boolean
+  /**
+   * The user-preferred conductor scheduling mode, when the deployment
+   * registers the `conductor` settings namespace; `undefined` hides the mode
+   * dropdown from deployments that do not compose the conductor domain.
+   */
+  conductorMode: ConductorMode | undefined
 }
 
 const INITIAL: AgentPresetSeatState = {
-  options: [], current: '', error: null, busy: false, introduce: false,
+  options: [], current: '', error: null, busy: false, introduce: false, conductorMode: undefined,
 }
 
 /** One session's identity and whether it has started. */
@@ -63,7 +69,7 @@ export class AgentPresetSeatController {
   private staged: string | undefined
 
   constructor(
-    private readonly api: Pick<IApiClient, 'agentPresets'>,
+    private readonly api: Pick<IApiClient, 'agentPresets' | 'settings'>,
     /** The session the hero is about to hand over to, when there is one. */
     private readonly currentSession: () => SeatSessionSummary | undefined,
     /**
@@ -91,6 +97,20 @@ export class AgentPresetSeatController {
       }
       const { presets } = response.result.value
       this.fallback = presets.find(preset => preset.isDefault)?.id ?? presets[0]?.id ?? ''
+      // The mode dropdown is an accessory of the chip: a refused describe or a
+      // missing `conductor` namespace simply hides it, it must never turn the
+      // chip itself into an error.
+      let conductorMode: ConductorMode | undefined
+      try {
+        const described = await this.api.settings.describe({})
+        conductorMode = described.result.ok
+          ? conductorModeOf(described.result.value.namespaces)
+          : undefined
+      } catch {
+        // The settings face is optional on this wire surface; the roster above
+        // remains the chip's authority and the dropdown stays hidden.
+        conductorMode = undefined
+      }
       this.set({
         options: presetOptions(presets),
         // Staged pick first, then the composition the current session
@@ -101,6 +121,7 @@ export class AgentPresetSeatController {
         // apply() already composed it.
         current: this.staged ?? this.currentSession()?.agentPreset ?? this.fallback,
         error: null,
+        conductorMode,
       })
     } catch (error) {
       this.set({ error: messageOf(error) })
@@ -139,6 +160,25 @@ export class AgentPresetSeatController {
   introduced(): void {
     if (!this.store.getSnapshot().introduce) return
     this.set({ introduce: false })
+  }
+
+  /**
+   * Persist one conductor scheduling mode for conductor sessions created
+   * later. Running boards keep the mode they began with; an explicit mode in
+   * a session's own instructions still overrides this preset.
+   * @param mode - the scheduling mode to make the default.
+   * @returns once the write settled.
+   */
+  async selectConductorMode(mode: ConductorMode): Promise<void> {
+    const before = this.store.getSnapshot()
+    if (before.busy || mode === before.conductorMode) return
+    this.set({ busy: true, error: null, conductorMode: mode })
+    const failure = await writeConductorMode(this.api, mode)
+    if (failure !== undefined) {
+      this.set({ busy: false, conductorMode: before.conductorMode, error: failure })
+      return
+    }
+    this.set({ busy: false, error: null })
   }
 
   /**

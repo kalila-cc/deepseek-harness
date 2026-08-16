@@ -37,6 +37,8 @@ const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_QUERY_MAX_CODE_UNITS = 500
 /** Session rows visible per Workspace before the local overflow control. */
 const COLLAPSED_SESSION_LIMIT = 5
+/** Stable fallback for official v5 snapshots that predate child ordering. */
+const EMPTY_SUBAGENT_ORDER: Readonly<Record<string, readonly string[]>> = {}
 
 /** Keep controlled input and RPC payload inside the session.search wire contract. */
 function sanitizeSearchQuery(value: string): string {
@@ -231,6 +233,10 @@ type SessionTreeProps = Pick<
   syncSessionOrderAccount: (accountKey: string, order: string[], updatedAt: Record<string, number>) => void
   /** Apply a drag to one shared order. */
   setSessionOrder: (accountKey: string, order: string[]) => void
+  /** Browser-local child order per parent session, for draggable subagent rows. */
+  subagentOrderByParent: Readonly<Record<string, readonly string[]>>
+  /** Replace one parent's browser-local child order. */
+  setSubagentOrder: (parentId: string, order: string[]) => void
   /** Registry-global archive set (hidden rows). */
   archivedSessionIds: readonly SessionNode['id'][]
   /** Open the browser-owned rename dialog for a real Workspace group. */
@@ -251,7 +257,8 @@ function SessionTree({
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
-  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
+  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
+  subagentOrderByParent, setSubagentOrder, t,
 }: SessionTreeProps) {
   const list = useSessions(s => s)
   const current = list.current
@@ -324,10 +331,21 @@ function SessionTree({
       ...(sessionOrderByAccount[UNGROUPED_KEY] === undefined
         ? {}
         : { ungroupedOrder: sessionOrderByAccount[UNGROUPED_KEY] }),
+      subagentOrder: subagentOrderByParent,
     }),
-    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount],
+    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount, subagentOrderByParent],
   )
   const now = Date.now()
+  /** Resolve a dragged or targeted row to its top-level ancestor session. */
+  const topLevelId = (id: SessionNode['id']): SessionNode['id'] => {
+    let current = id
+    for (let hops = 0; hops < 64; hops += 1) {
+      const session = list.byId[current]
+      if (session === undefined || session.parentId === undefined) return current
+      current = session.parentId
+    }
+    return current
+  }
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
     if (sessionDropCommitted.current) return
     sessionDropCommitted.current = true
@@ -336,23 +354,51 @@ function SessionTree({
     if (group === undefined) return
     const targetIndex = group.sessions.findIndex(session => session.id === over.id)
     if (targetIndex === -1) return
-    const anchor = over.half === 'before' ? over.id : group.sessions[targetIndex + 1]?.id
-    if (anchor === activeDrag.sessionId) return
-    const sourceIndex = group.sessions.findIndex(session => session.id === activeDrag.sessionId)
-    const anchorIndex = anchor === undefined
-      ? group.sessions.length
-      : group.sessions.findIndex(session => session.id === anchor)
-    if (sourceIndex !== -1 && (anchorIndex === sourceIndex || anchorIndex === sourceIndex + 1)) return
+    // A subagent dropped onto a sibling under the same parent reorders the
+    // parent's child block (browser-local). Any other drop moves the whole
+    // parent block through the top-level account order.
+    const sourceSummary = list.byId[activeDrag.sessionId]
+    const overSummary = list.byId[over.id]
+    const sourceParent = sourceSummary?.parentId
+    if (sourceParent !== undefined && overSummary?.parentId === sourceParent) {
+      const block = group.sessions.filter(session => list.byId[session.id]?.parentId === sourceParent)
+      const blockIndex = block.findIndex(session => session.id === over.id)
+      if (blockIndex === -1) return
+      const anchor = over.half === 'before' ? over.id : block[blockIndex + 1]?.id
+      if (anchor === activeDrag.sessionId) return
+      const nextOrder = block.map(session => session.id).filter(id => id !== activeDrag.sessionId)
+      const insertAt = anchor === undefined ? nextOrder.length : nextOrder.indexOf(anchor)
+      nextOrder.splice(insertAt === -1 ? nextOrder.length : insertAt, 0, activeDrag.sessionId)
+      setSubagentOrder(sourceParent, nextOrder.map(id => id as string))
+      return
+    }
+    // A subagent row drags its whole parent block: child rows never leave
+    // their parent's subtree, so the reorder operates on the top-level ids.
+    const source = topLevelId(activeDrag.sessionId)
+    const anchorRaw = over.half === 'before' ? over.id : group.sessions[targetIndex + 1]?.id
+    const anchor = anchorRaw === undefined ? undefined : topLevelId(anchorRaw)
     const accountSessionIds = activeDrag.accountKey === UNGROUPED_KEY
       ? orderedUngroupedSessionIds
       : orderedWorkspaces.find(workspace => workspace.workspaceId === activeDrag.accountKey)?.sessionIds
     if (accountSessionIds === undefined) return
-    const nextOrder = accountSessionIds.filter(id => id !== activeDrag.sessionId)
+    if (anchor === source) return
+    const sourceAt = accountSessionIds.indexOf(source)
+    const anchorAt = anchor === undefined ? -1 : accountSessionIds.indexOf(anchor)
+    // Dropping onto the position the block already occupies is a no-op:
+    // directly in front of itself, or at the list end when it is last. A
+    // source the host removed mid-drag is never a no-op.
+    if (sourceAt !== -1) {
+      if (anchorAt === sourceAt + 1) return
+      if (anchor === undefined && sourceAt === accountSessionIds.length - 1) return
+    }
+    const nextOrder = accountSessionIds.filter(id => id !== source)
     const insertAt = anchor === undefined ? nextOrder.length : nextOrder.indexOf(anchor)
-    nextOrder.splice(insertAt === -1 ? nextOrder.length : insertAt, 0, activeDrag.sessionId)
+    nextOrder.splice(insertAt === -1 ? nextOrder.length : insertAt, 0, source)
     setSessionOrder(activeDrag.accountKey, nextOrder.map(id => id as string))
-    if (orderBy === 'updated' || activeDrag.accountKey === UNGROUPED_KEY) return
-    insertSessionBefore(activeDrag.accountKey as WorkspaceId, activeDrag.sessionId, anchor).catch((reason: unknown) => {
+    // The Ungrouped bucket has no Host account to persist into; the shared
+    // order stays browser-local there.
+    if (activeDrag.accountKey === UNGROUPED_KEY) return
+    insertSessionBefore(activeDrag.accountKey as WorkspaceId, source, anchor).catch((reason: unknown) => {
       console.warn('session reorder rejected:', reason)
     })
   }
@@ -772,6 +818,7 @@ export function WorkspaceBrowser({
   const groupExpansion = useStore(s => s.groupExpansion)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   const sessionUpdatedAtByAccount = useStore(s => s.sessionUpdatedAtByAccount)
+  const subagentOrderByParent = useStore(s => s.subagentOrderByParent ?? EMPTY_SUBAGENT_ORDER)
   useEffect(() => {
     if (workspacePhase !== 'ready') return
     actions.retainAccountKeys([
@@ -1146,6 +1193,8 @@ export function WorkspaceBrowser({
                 sessionUpdatedAtByAccount={sessionUpdatedAtByAccount}
                 syncSessionOrderAccount={actions.syncSessionOrderAccount}
                 setSessionOrder={actions.setSessionOrder}
+                subagentOrderByParent={subagentOrderByParent}
+                setSubagentOrder={actions.setSubagentOrder}
                 archivedSessionIds={archivedSessionIds}
                 startSession={startSession}
                 open={open}

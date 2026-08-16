@@ -22,6 +22,8 @@ export interface AgentPresetRowInjected {
   load: () => Promise<void>
   /** Persist one preset as the default for later sessions. */
   select: (id: string) => Promise<void>
+  /** Persist one conductor scheduling mode for later conductor sessions. */
+  selectConductorMode: (mode: 'serial' | 'parallel') => Promise<void>
 }
 
 /** Full component props. */
@@ -35,7 +37,7 @@ export type AgentPresetRowProps =
  * @param props - composed slot props.
  * @returns the row, or null when the deployment composes no presets.
  */
-export function AgentPresetRow({ load, select, useAgentPreset, t }: AgentPresetRowProps) {
+export function AgentPresetRow({ load, select, selectConductorMode, useAgentPreset, t }: AgentPresetRowProps) {
   const state = useAgentPreset(snapshot => snapshot)
   const [open, setOpen] = useState(false)
 
@@ -58,6 +60,10 @@ export function AgentPresetRow({ load, select, useAgentPreset, t }: AgentPresetR
   const chosenText = chosen === undefined ? undefined : presetDisplayText(chosen, t)
   const label = state.currentValue === '' ? t('loading') : (chosenText?.name ?? state.currentValue)
   const description: string = state.error ?? t('description')
+  // The scheduling-mode control belongs to the conductor preset: it presets
+  // how THAT preset's sessions schedule their subtasks, and only shows when
+  // the deployment registers the `conductor` settings namespace.
+  const showMode = state.conductorMode !== undefined && state.currentValue === 'conductor'
 
   return (
     <div className={css.row}>
@@ -77,6 +83,28 @@ export function AgentPresetRow({ load, select, useAgentPreset, t }: AgentPresetR
         onOpenChange={setOpen}
         onSelect={(id) => { void select(id) }}
       />
+      {showMode && (
+        <div className={css.modeRow}>
+          <div className={css.modeText}>
+            <div className={css.modeTitle}>{t('modeTitle')}</div>
+            <div className={css.modeHint}>{t('modeHint')}</div>
+          </div>
+          <div className={css.modeButtons} role="group" aria-label={t('modeTitle')}>
+            <button
+              type="button"
+              className={state.conductorMode === 'serial' ? css.modeActive : css.modeButton}
+              disabled={busy || !state.writable}
+              onClick={() => { void selectConductorMode('serial') }}
+            >{t('serial')}</button>
+            <button
+              type="button"
+              className={state.conductorMode === 'parallel' ? css.modeActive : css.modeButton}
+              disabled={busy || !state.writable}
+              onClick={() => { void selectConductorMode('parallel') }}
+            >{t('parallel')}</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

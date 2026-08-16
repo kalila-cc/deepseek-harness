@@ -40,6 +40,49 @@ function readString(record: Record<string, unknown>, key: string): string | null
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
+/**
+ * Whether one durable source represents a user-visible message from another
+ * session.
+ *
+ * Explicit relay producers are merge-extensible, so that arm follows the
+ * stable source shape instead of a closed list of coordinator/conductor kind
+ * names. A continuable child's automatic closing report is also a visible
+ * cross-session message: it carries the child's final output while waking its
+ * parent, despite using the `notice` form to retain settlement provenance.
+ * Every arm must identify the sending session.
+ * @param source - the logged `user/message` source, exactly as recorded.
+ */
+export function isUserVisibleInterSessionSource(source: unknown): boolean {
+  const record = asRecord(source)
+  if (record === null || readString(record, 'senderSessionId') === null) return false
+  const form = readString(record, 'form')
+  return form === 'relay'
+    || (form === 'notice' && readString(record, 'kind') === 'subagent-settled')
+}
+
+/**
+ * Project the human-authored portion of one visible inter-session message.
+ *
+ * A subagent settlement stores two runtime-authored framing blocks before the
+ * child's closing output so the receiving model knows the lifecycle edge. The
+ * transcript bubble credits only the closing output to the child. Historical
+ * or output-less notices that do not carry that tail remain intact.
+ * @param source - the logged `user/message` source, exactly as recorded.
+ * @param content - the model-facing message blocks.
+ */
+export function userVisibleInterSessionContent<T>(
+  source: unknown,
+  content: readonly T[],
+): readonly T[] {
+  const record = asRecord(source)
+  return record !== null
+    && readString(record, 'kind') === 'subagent-settled'
+    && readString(record, 'form') === 'notice'
+    && content.length > 2
+    ? content.slice(2)
+    : content
+}
+
 /** Distinct non-empty `field` values of an array-valued source member, in first-seen order. */
 function collect(source: Record<string, unknown>, member: string, field: string): string[] {
   const list = source[member]

@@ -1,0 +1,43 @@
+# Test-only composition: create one conductor board through a Loader-mounted step consumer.
+- id: cli-mock-llm
+  name: '../cli-mock-llm.ts'
+
+# Managed child-process groups for the bash executor (spawn/kill/output plumbing).
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+
+- id: bash
+  name: '@deepseek-ai/dsh-bash-local'
+
+- id: conductor
+  name: '@deepseek-ai/dsh-conductor'
+  config:
+    maxParallelWorkers: 5
+
+# The conductor service hard-depends on the subagent service; the fixture only
+# persists a board, so a stub stands in for the real registry.
+- id: stub-subagents
+  name: './stub-subagents.ts'
+
+- id: seed-conductor
+  name: './seed-conductor.ts'
+
+- id: agent-spine
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    agents:
+      - id: main
+        provider: cli-mock
+        model: cli-mock
+        cwd: !!js process.cwd()
+    persona: 'Test the persisted conductor domain.'
+    workspaceContext: false
+
+- id: persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: './.sessions'
+    compression: none
+
+- id: checkpoint-policy
+  name: '@deepseek-ai/dsh-session-checkpoint-policy'

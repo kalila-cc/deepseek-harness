@@ -1,0 +1,15 @@
+# The conductor-mode profile layer. This one row owns the Host runtime and
+# materializes the user-root preset; the preset resolves its two model-facing
+# tool entries through subpath exports of this same installed package.
+
+- insert:
+    - id: conductor-bundle
+      name: '@deepseek-ai/dsh-conductor-bundle'
+      config:
+        conductor:
+          workerProvider: spawn
+          handoverProvider: spawn
+          maxParallelWorkers: 3
+          reportHistoryLimit: 8
+        roundDriver:
+          handoverAfterCompactions: 4

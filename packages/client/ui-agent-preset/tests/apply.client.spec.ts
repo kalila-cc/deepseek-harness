@@ -74,7 +74,9 @@ async function bench() {
   // The host's answer, mutable so a spec can move the default the way the
   // settings surface does and watch who re-reads it.
   let ROSTER: typeof ROSTER_ONE | typeof ROSTER_MOVED | typeof ROSTER_AUTHORED = ROSTER_ONE
+  let conductorMode: 'serial' | 'parallel' = 'parallel'
   const moveDefault = (): void => { ROSTER = ROSTER_MOVED }
+  const moveConductorMode = (mode: 'serial' | 'parallel'): void => { conductorMode = mode }
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
   ctx.provide('locale', locale)
@@ -111,13 +113,27 @@ async function bench() {
         // The row reads this to learn whether this browser may write at all.
         describe: () => Promise.resolve({
           rpcId: 'r',
-          result: { ok: true as const, value: { writable: true, hasDocument: true, namespaces: [] } },
+          result: {
+            ok: true as const,
+            value: {
+              writable: true,
+              hasDocument: true,
+              namespaces: [{ ns: 'conductor', value: { mode: conductorMode } }],
+            },
+          },
         }),
-        update: (payload: { patch: unknown }) => { calls.push(`settings:${JSON.stringify(payload.patch)}`); return Promise.resolve({ rpcId: 'r', result: { ok: true as const, value: {} } }) },
+        update: (payload: { ns: string; patch: { mode?: unknown } }) => {
+          calls.push(`settings:${JSON.stringify(payload.patch)}`)
+          if (payload.ns === 'conductor'
+            && (payload.patch.mode === 'serial' || payload.patch.mode === 'parallel')) {
+            conductorMode = payload.patch.mode
+          }
+          return Promise.resolve({ rpcId: 'r', result: { ok: true as const, value: {} } })
+        },
       },
     },
   } as never)
-  return { ctx, slots: ctx.get('slots') as SlotRegistry, calls, moveDefault }
+  return { ctx, slots: ctx.get('slots') as SlotRegistry, calls, moveDefault, moveConductorMode }
 }
 
 function declareRoot(slots: SlotRegistry): () => void {
@@ -219,6 +235,7 @@ describe('ui-agent-preset apply', () => {
     // store, and the section's default write does not go through the row.
     await row.load()
     await row.select('standard')
+    await row.selectConductorMode('parallel')
     await section.makeDefault('standard')
     expect(row.hooks.agentPreset.getSnapshot().options).toEqual([{ id: 'standard', trust: 'system' }])
     expect(section.hooks.agentPresetSection.getSnapshot().rows)
@@ -349,6 +366,30 @@ describe('ui-agent-preset apply', () => {
     ctx.remote.$dispatch('settings/document-updated', ['agent-presets', 1])
     await vi.waitFor(() => {
       expect(seat.hooks.agentPresetSeat.getSnapshot().current).toBe('minimal')
+    })
+    conversation()
+  })
+
+  it('converges the conductor mode across the settings row and new-session seat', async () => {
+    const { ctx, slots, moveConductorMode } = await bench()
+    declareRoot(slots)
+    const conversation = declareConversation(slots)
+    ctx.provide('conversation', {} as never)
+    ctx.provide('sessions', sessionsDouble({ byId: {} }) as never)
+    ctx.provide('workspaces', workspacesDouble() as never)
+    await ctx.plugin({ inject: [...inject, 'conversation', 'sessions', 'workspaces'], apply }).await()
+
+    const row = (slots.entries('settings.general.item')[0]!.inject as unknown as () => AgentPresetRowInjected)()
+    const seat = (slots.entries('conversation.hero.agentPreset')[0]!.inject as unknown as () => AgentPresetSeatInjected)()
+    await Promise.all([row.load(), seat.load()])
+    expect(row.hooks.agentPreset.getSnapshot().conductorMode).toBe('parallel')
+    expect(seat.hooks.agentPresetSeat.getSnapshot().conductorMode).toBe('parallel')
+
+    moveConductorMode('serial')
+    ctx.remote.$dispatch('settings/document-updated', ['conductor', 1])
+    await vi.waitFor(() => {
+      expect(row.hooks.agentPreset.getSnapshot().conductorMode).toBe('serial')
+      expect(seat.hooks.agentPresetSeat.getSnapshot().conductorMode).toBe('serial')
     })
     conversation()
   })
@@ -532,6 +573,9 @@ describe('ui-agent-preset apply', () => {
     expect(acknowledged.introduce).toBe(false)
     seat.introduced()
     expect(seat.hooks.agentPresetSeat.getSnapshot()).toBe(acknowledged)
+    // The scheduling-mode pick routes to the same chip controller.
+    await seat.selectConductorMode('serial')
+    expect(seat.hooks.agentPresetSeat.getSnapshot().conductorMode).toBe('serial')
     conversation()
   })
 

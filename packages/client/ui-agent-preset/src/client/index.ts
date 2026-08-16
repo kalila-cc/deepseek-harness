@@ -32,7 +32,11 @@ import { AgentPresetSeatController } from './seat-store.ts'
 import type { SeatSessionSummary } from './seat-store.ts'
 import { AgentPresetSectionController } from './section-store.ts'
 import { en, zh } from './locales.ts'
-import { AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController } from './settings-store.ts'
+import {
+  AGENT_PRESET_SETTINGS_NS,
+  CONDUCTOR_SETTINGS_NS,
+  AgentPresetSettingsController,
+} from './settings-store.ts'
 
 export type { AgentPresetLabelInjected, AgentPresetLabelProps } from './AgentPresetLabel.tsx'
 export type { AgentPresetRowInjected, AgentPresetRowProps } from './AgentPresetRow.tsx'
@@ -42,8 +46,10 @@ export type { AgentPresetSeatState, SeatSessionSummary } from './seat-store.ts'
 export {
   draftBlocker, type AgentPresetSectionState, type CopyDraft, type PresetRow, type PresetView,
 } from './section-store.ts'
-export type { AgentPresetOption, AgentPresetSettingsState } from './settings-store.ts'
-export { AGENT_PRESET_SETTINGS_NS, writeDefaultPreset } from './settings-store.ts'
+export type { AgentPresetOption, AgentPresetSettingsState, ConductorMode } from './settings-store.ts'
+export {
+  AGENT_PRESET_SETTINGS_NS, CONDUCTOR_SETTINGS_NS, conductorModeOf, writeConductorMode, writeDefaultPreset,
+} from './settings-store.ts'
 
 /** Required services (cordis fiber inject). */
 export const inject = ['slots', 'locale', 'connection', 'remote']
@@ -69,6 +75,7 @@ export function apply(ctx: ClientContext): void {
     hooks: { agentPreset: controller.store },
     load: () => controller.load(),
     select: (id: string) => controller.select(id),
+    selectConductorMode: (mode: 'serial' | 'parallel') => controller.selectConductorMode(mode),
   })
 
   ctx.effect(() => {
@@ -82,8 +89,11 @@ export function apply(ctx: ClientContext): void {
     }
     const disposers = [
       ctx.remote.$on('settings/document-updated', (ns) => {
-        if (ns !== AGENT_PRESET_SETTINGS_NS) return
-        refresh()
+        if (ns === AGENT_PRESET_SETTINGS_NS) {
+          refresh()
+          return
+        }
+        if (ns === CONDUCTOR_SETTINGS_NS) void controller.load()
       }),
       ctx.on('connection/reset', () => { refresh() }),
     ]
@@ -120,6 +130,7 @@ export function apply(ctx: ClientContext): void {
       load: () => seat.load(),
       select: (id: string) => seat.select(id),
       introduced: () => { seat.introduced() },
+      selectConductorMode: (mode: 'serial' | 'parallel') => seat.selectConductorMode(mode),
     })
 
     const labelInjected = (): AgentPresetLabelInjected => ({
@@ -138,7 +149,7 @@ export function apply(ctx: ClientContext): void {
       // which is exactly the session the setting claims to govern. A staged
       // pick survives: `load()` prefers it over the refreshed fallback.
       const settingsMoved = scope.remote.$on('settings/document-updated', (ns) => {
-        if (ns !== AGENT_PRESET_SETTINGS_NS) return
+        if (ns !== AGENT_PRESET_SETTINGS_NS && ns !== CONDUCTOR_SETTINGS_NS) return
         void seat.load()
       })
       // Every tab folds the committed preset into the shared session row; the

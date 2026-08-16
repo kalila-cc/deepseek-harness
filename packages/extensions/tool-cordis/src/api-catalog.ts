@@ -497,6 +497,130 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'conductor',
+    summary: 'Conductor service (`ctx.conductor`): the event-sourced task board of one conductor window, its worker scheduling, delivery, and handover.',
+    description: 'Conductor service (`ctx.conductor`): the event-sourced task board of one conductor window, its worker scheduling, delivery, and handover.',
+    methods: [
+      {
+        signature: 'get(agent: Agent): ConductorView | undefined',
+        description: 'Read the board of one exact live agent\'s session.',
+        parameters: [{ name: 'agent', description: 'the live agent whose session log holds the board.' }],
+        returns: 'a fresh view or `undefined` when its session has no board.',
+        throws: ['{@link ConductorError} when the agent is not the registry\'s live instance.'],
+      },
+      {
+        signature: 'disarm(agent: Agent): ConductorView | undefined',
+        description: 'Remove process-local continuation authority without changing durable board phase or revision. Lifecycle owners use this before unloading a driver; a later session-start or resume re-arms the current conductor.',
+        parameters: [{ name: 'agent', description: 'owning live agent.' }],
+        returns: 'a fresh disarmed view, or `undefined` when no board is current.',
+      },
+      {
+        signature: 'init(agent: Agent, request: InitConductorRequest): ConductorView',
+        description: 'Create and arm a board; the calling session becomes the conductor. A completed board may be replaced; every other current phase must be cleared or resumed instead. Only a top-level session (not a delegated worker) may become a conductor.',
+        parameters: [{ name: 'agent', description: 'owning live agent.' }, { name: 'request', description: 'objective, mode, plan outline, and optional parallel cap.' }],
+        returns: 'the created live view.',
+      },
+      {
+        signature: 'edit(agent: Agent, ref: ConductorRef, request: EditConductorRequest): ConductorView',
+        description: 'Edit objective and/or plan outline without changing phase, mode, or tasks.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'request', description: 'at least one replacement field.' }],
+        returns: 'the edited view.',
+      },
+      {
+        signature: 'setMode(agent: Agent, ref: ConductorRef, mode: ConductorMode, maxParallelWorkers?: number): ConductorView',
+        description: 'Switch the scheduling mode and/or the parallel cap without changing the board definition or tasks.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'mode', description: 'the new scheduling mode.' }, { name: 'maxParallelWorkers', description: 'the new parallel cap.' }],
+        returns: 'the switched view.',
+      },
+      {
+        signature: 'pause(agent: Agent, ref: ConductorRef): ConductorView',
+        description: 'Pause an active board and disarm automatic advancement.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }],
+        returns: 'the paused view.',
+      },
+      {
+        signature: 'resume(agent: Agent, ref: ConductorRef): ConductorView',
+        description: 'Resume and arm a stopped board, or rearm an active board after a session-start edge.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }],
+        returns: 'the active view.',
+      },
+      {
+        signature: 'complete(agent: Agent, ref: ConductorRef): ConductorView',
+        description: 'Mark a current non-complete board complete and disarm it.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }],
+        returns: 'the completed view.',
+      },
+      {
+        signature: 'block(agent: Agent, ref: ConductorRef, reason: TaskBlockReason): ConductorView',
+        description: 'Mark an active board blocked and disarm it.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'reason', description: 'policy-owned stable code and human-readable explanation.' }],
+        returns: 'the blocked view with its durable reason.',
+      },
+      {
+        signature: 'clear(agent: Agent, ref: ConductorRef): ConductorRef',
+        description: 'Clear the current board while retaining a durable tombstone and history.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }],
+        returns: 'the tombstone ref whose revision is one past the cleared snapshot.',
+      },
+      {
+        signature: 'createTask(agent: Agent, ref: ConductorRef, request: CreateTaskRequest): ConductorView',
+        description: 'Add one task to the board. Dependencies must name existing task ids and must not create a cycle.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'request', description: 'title, description, and optional existing-task dependencies.' }],
+        returns: 'the updated view.',
+      },
+      {
+        signature: 'editTask(agent: Agent, ref: ConductorRef, taskId: TaskId, request: EditTaskRequest): ConductorView',
+        description: 'Edit one task\'s title, description, or dependencies without changing its status or reports.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'taskId', description: 'the task to edit.' }, { name: 'request', description: 'at least one replacement field.' }],
+        returns: 'the updated view.',
+      },
+      {
+        signature: 'setTaskStatus(agent: Agent, ref: ConductorRef, taskId: TaskId, status: TaskStatus, reason?: unknown): ConductorView',
+        description: 'Set one task\'s status. Blocking requires a reason; leaving the done status is rejected.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'taskId', description: 'the task to update.' }, { name: 'status', description: 'the target status.' }, { name: 'reason', description: 'required exactly when `status` is `blocked`.' }],
+        returns: 'the updated view.',
+      },
+      {
+        signature: 'reassignTask(agent: Agent, ref: ConductorRef, taskId: TaskId): ConductorView',
+        description: 'Return one task to the todo status without an assignee so the scheduler assigns a fresh worker window. Prior reports are retained for the next worker\'s briefing. A done task cannot be reassigned.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'ref', description: 'expected current revision.' }, { name: 'taskId', description: 'the task to reassign.' }],
+        returns: 'the updated view.',
+      },
+      {
+        signature: 'report(worker: Agent, request: TaskReportRequest): ReportResult',
+        description: 'Receive a worker\'s report about its assigned task: validate the worker, commit the report into the current conductor\'s board, and deliver the framed report message to the current conductor window.',
+        parameters: [{ name: 'worker', description: 'exact live reporting worker agent.' }, { name: 'request', description: 'task id, claimed status, and self-contained message.' }],
+        returns: 'the accepted report delivery\'s message id.',
+        throws: ['{@link ConductorError} when the worker is not the task\'s assignee, the task is already done, or no live current conductor exists.'],
+      },
+      {
+        signature: 'async deliver(agent: Agent, workerSessionId: SessionId, text: string): Promise<DeliverResult>',
+        description: 'Deliver one message from the current conductor to one of its workers. Cold-resumes the worker through the subagent service when the conductor is the worker\'s durable direct parent; otherwise the worker agent must be live.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'workerSessionId', description: 'the worker session to deliver to.' }, { name: 'text', description: 'the message content.' }],
+        returns: 'the accepted delivery\'s message id.',
+      },
+      {
+        signature: 'async handover(agent: Agent, reason: string): Promise<HandoverResult>',
+        description: 'Hand the conductor role to a fresh window: create a continuable child, transfer the full board snapshot into its log, and retire this window. The same change payload commits to both sessions, so each side\'s log reconstructs the same post-handover board.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }, { name: 'reason', description: 'why the window is handing over.' }],
+        returns: 'the successor window\'s session id and briefing message id.',
+      },
+      {
+        signature: 'async spawnWorkers(agent: Agent): Promise<SpawnedWorker[]>',
+        description: 'Spawn worker windows for the currently ready tasks, honoring the board\'s scheduling mode: the first ready task in serial mode, ready tasks up to the parallel cap otherwise. Tasks whose dependencies are blocked are marked blocked first.',
+        parameters: [{ name: 'agent', description: 'owning live agent (the current conductor).' }],
+        returns: 'the spawned worker identities in assignment order.',
+        throws: ['{@link ConductorError} when the board is not active and armed or a spawn fails.'],
+      },
+      {
+        signature: 'compactionCount(session: Session): number',
+        description: 'Count the context compactions a session has undergone.',
+        parameters: [{ name: 'session', description: 'the session to count.' }],
+        returns: 'the number of `compaction/summary` events in its log.',
+      },
+    ],
+  },
+  {
     key: 'credentials',
     summary: 'Abstract credential service.',
     description: 'Abstract credential service. Providers implement the four operations over their source layers; one seam-wide rule binds them all: an empty stored value is absent everywhere — `resolve` skips it, `describe` reports it unconfigured — so a blank never masquerades as a configured secret.',
@@ -2286,6 +2410,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'conductor/changed',
+    mode: 'emit',
+    signature: '\'conductor/changed\'(this: import(\'@deepseek-ai/dsh-scope\').Scoped<Agent>, payload: { agent: Agent change: ConductorChanged }): void',
+    summary: 'Board mutation accepted into one session\'s log.',
+    description: 'Board mutation accepted into one session\'s log. The matching `conductor/change` session event has already committed. Listener failures are contained. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.',
+    parameters: [{ name: 'payload', description: '.change - fresh current projection or clear tombstone.' }],
+  },
+  {
     name: 'cordis/dynamic-package',
     mode: 'emit',
     signature: '\'cordis/dynamic-package\'(pkg: DynamicCordisPackage): void',
@@ -2822,6 +2954,46 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type CompactionTrigger = \'pressure\' | \'context-overflow\';',
   },
   {
+    name: 'ConductorActivation',
+    declaration: 'export type ConductorActivation = \'armed\' | \'disarmed\';',
+  },
+  {
+    name: 'ConductorBlockReason',
+    declaration: 'export interface ConductorBlockReason {\n    readonly code: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'ConductorChanged',
+    declaration: 'export interface ConductorChanged {\n    readonly operation: ConductorOperation;\n    readonly ref: ConductorRef;\n    readonly board?: ConductorView;\n}',
+  },
+  {
+    name: 'ConductorId',
+    declaration: 'export type ConductorId = Branded<\'ConductorId\'>;',
+  },
+  {
+    name: 'ConductorMode',
+    declaration: 'export type ConductorMode = \'serial\' | \'parallel\';',
+  },
+  {
+    name: 'ConductorOperation',
+    declaration: 'export type ConductorOperation = \'init\' | \'edit\' | \'set-mode\' | \'pause\' | \'resume\' | \'complete\' | \'block\' | \'clear\' | \'task-create\' | \'task-edit\' | \'task-status\' | \'task-assign\' | \'task-report\' | \'handover\';',
+  },
+  {
+    name: 'ConductorPhase',
+    declaration: 'export type ConductorPhase = \'active\' | \'paused\' | \'blocked\' | \'complete\';',
+  },
+  {
+    name: 'ConductorRef',
+    declaration: 'export interface ConductorRef {\n    readonly id: ConductorId;\n    readonly revision: number;\n}',
+  },
+  {
+    name: 'ConductorSnapshot',
+    declaration: 'export interface ConductorSnapshot extends ConductorRef {\n    readonly objective: string;\n    readonly planOutline: string;\n    readonly mode: ConductorMode;\n    readonly maxParallelWorkers: number;\n    readonly phase: ConductorPhase;\n    readonly blockedReason?: ConductorBlockReason;\n    readonly conductorSessionId: SessionId;\n    readonly handoverCount: number;\n    readonly tasks: readonly TaskSnapshot[];\n}',
+  },
+  {
+    name: 'ConductorView',
+    declaration: 'export interface ConductorView extends ConductorSnapshot {\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly activation: ConductorActivation;\n    readonly compactionCount: number;\n}',
+  },
+  {
     name: 'ConfinedArgv',
     declaration: 'export interface ConfinedArgv {\n    argv: string[];\n    enforcement: SandboxEnforcement;\n    denialSignatures: readonly string[];\n    runnerFailureRules: readonly RunnerFailureRule[];\n}',
   },
@@ -2914,12 +3086,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
+    name: 'CreateTaskRequest',
+    declaration: 'export interface CreateTaskRequest {\n    readonly title: string;\n    readonly description: string;\n    readonly dependsOn?: readonly TaskId[];\n}',
+  },
+  {
     name: 'CredentialInfo',
     declaration: 'export interface CredentialInfo {\n    configured: boolean;\n    source?: string;\n    writable: boolean;\n}',
   },
   {
     name: 'CredentialRef',
     declaration: 'export type CredentialRef = Branded<\'CredentialRef\'>;',
+  },
+  {
+    name: 'DeliverResult',
+    declaration: 'export interface DeliverResult {\n    readonly messageId: string;\n}',
   },
   {
     name: 'DiffCallView',
@@ -3022,8 +3202,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DynamicCordisRunRequest {\n    requestId: ApprovalRequestId;\n    agentId: SessionId;\n    pluginId: CordisDynamicPluginId;\n    packageId: CordisDynamicPackageId;\n    mode: CordisDynamicRunMode;\n    name: string;\n    purpose: string;\n    requiresApproval: boolean;\n}',
   },
   {
+    name: 'EditConductorRequest',
+    declaration: 'export interface EditConductorRequest {\n    readonly objective?: string;\n    readonly planOutline?: string;\n}',
+  },
+  {
     name: 'EditGoalRequest',
     declaration: 'export interface EditGoalRequest {\n    readonly objective?: string;\n    readonly maxGoalRounds?: number;\n}',
+  },
+  {
+    name: 'EditTaskRequest',
+    declaration: 'export interface EditTaskRequest {\n    readonly title?: string;\n    readonly description?: string;\n    readonly dependsOn?: readonly TaskId[];\n}',
   },
   {
     name: 'EpochHeader',
@@ -3130,6 +3318,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GoalView extends GoalSnapshot {\n    readonly roundsStarted: number;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly activation: GoalActivation;\n}',
   },
   {
+    name: 'HandoverResult',
+    declaration: 'export interface HandoverResult {\n    readonly childId: SessionId;\n    readonly messageId: string;\n}',
+  },
+  {
     name: 'ImageAttachmentLimits',
     declaration: 'export interface ImageAttachmentLimits {\n    maxImageBytes: number;\n    maxImagesPerMessage: number;\n    maxMessageImageBytes: number;\n    maxImagePixels: number;\n    mediaTypes: readonly ImageMediaType[];\n}',
   },
@@ -3156,6 +3348,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'InboxTarget',
     declaration: 'export type InboxTarget = \'next-turn\' | \'next-step\';',
+  },
+  {
+    name: 'InitConductorRequest',
+    declaration: 'export interface InitConductorRequest {\n    readonly objective: string;\n    readonly mode?: ConductorMode;\n    readonly planOutline?: string;\n    readonly maxParallelWorkers?: number;\n}',
   },
   {
     name: 'InvariantFailure',
@@ -3576,6 +3772,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RedactedSecret',
     declaration: 'export interface RedactedSecret {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'ReportResult',
+    declaration: 'export interface ReportResult {\n    readonly messageId: string;\n}',
   },
   {
     name: 'RequestContext',
@@ -4062,6 +4262,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillViewOptions extends SkillLookupOptions {\n    readonly scope?: ScopeKey | undefined;\n}',
   },
   {
+    name: 'SpawnedWorker',
+    declaration: 'export interface SpawnedWorker {\n    readonly taskId: TaskId;\n    readonly workerId: SessionId;\n    readonly messageId: string;\n}',
+  },
+  {
     name: 'SpillLocator',
     declaration: 'export type SpillLocator = Branded<\'SpillLocator\'>;',
   },
@@ -4240,6 +4444,34 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TableValueOf',
     declaration: 'export type TableValueOf<S extends DomainSpec, N extends keyof S[\'tables\']> = S[\'tables\'][N] extends DomainTableSpec<string, infer V> ? V : never;',
+  },
+  {
+    name: 'TaskBlockReason',
+    declaration: 'export interface TaskBlockReason {\n    readonly code: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'TaskId',
+    declaration: 'export type TaskId = Branded<\'TaskId\'>;',
+  },
+  {
+    name: 'TaskReportEntry',
+    declaration: 'export interface TaskReportEntry {\n    readonly status: TaskReportStatus;\n    readonly message: string;\n    readonly at: number;\n    readonly workerSessionId: SessionId;\n    readonly workerCompactions: number;\n}',
+  },
+  {
+    name: 'TaskReportRequest',
+    declaration: 'export interface TaskReportRequest {\n    readonly taskId: TaskId;\n    readonly status: TaskReportStatus;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'TaskReportStatus',
+    declaration: 'export type TaskReportStatus = \'progress\' | \'done\' | \'blocked\';',
+  },
+  {
+    name: 'TaskSnapshot',
+    declaration: 'export interface TaskSnapshot {\n    readonly id: TaskId;\n    readonly title: string;\n    readonly description: string;\n    readonly status: TaskStatus;\n    readonly dependsOn: readonly TaskId[];\n    readonly assignee?: SessionId;\n    readonly blockedReason?: TaskBlockReason;\n    readonly reports: readonly TaskReportEntry[];\n}',
+  },
+  {
+    name: 'TaskStatus',
+    declaration: 'export type TaskStatus = \'todo\' | \'in-progress\' | \'done\' | \'blocked\';',
   },
   {
     name: 'TerminalBackend',

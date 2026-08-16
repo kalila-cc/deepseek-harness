@@ -81,6 +81,47 @@ function MessageItem({ node, t: translate }: MessageItemProps) {
 }
 
 describe('MessageItem arms', () => {
+  it('attribution line names the relaying session above a window-to-window bubble', () => {
+    render(
+      <UserMessageNodeView {...({
+        node: {
+          key: 'u:1', kind: 'user', id: '1', target: 'chat', anchorSeq: 1,
+          location: { kind: 'session' }, visibility: 'visible',
+          data: {
+            seq: 1, time: 0,
+            content: [{ type: 'text', text: 'progress' }],
+            source: { kind: 'subagent-report', form: 'relay', senderSessionId: 'session-w1' },
+          },
+        },
+        resolveSenderName: (id: string) => id === 'session-w1' ? '写物理引擎' : undefined,
+        t,
+      } as unknown as ChatNodeViewProps<'user'>)} />,
+    )
+    // The bubble names who spoke, above the bubble itself.
+    expect(screen.getByText('由 写物理引擎 会话发送')).toBeTruthy()
+    expect(screen.getByText('progress')).toBeTruthy()
+  })
+
+  it('falls back to the sender id when the relaying session title is unavailable', () => {
+    render(
+      <UserMessageNodeView {...({
+        node: {
+          key: 'u:2', kind: 'user', id: '2', target: 'chat', anchorSeq: 2,
+          location: { kind: 'session' }, visibility: 'visible',
+          data: {
+            seq: 2, time: 0,
+            content: [{ type: 'text', text: 'peer update' }],
+            source: { kind: 'coordinator', form: 'relay', senderSessionId: 'f7bf8853-1234-5678' },
+          },
+        },
+        resolveSenderName: () => undefined,
+        t,
+      } as unknown as ChatNodeViewProps<'user'>)} />,
+    )
+    expect(screen.getByText('由 f7bf8853 会话发送')).toBeTruthy()
+    expect(screen.getByText('peer update')).toBeTruthy()
+  })
+
   it('user bubbles expose clock / copy and neither branch nor edit; copy writes the text', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {

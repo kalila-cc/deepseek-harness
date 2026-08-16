@@ -177,12 +177,14 @@ function projectUserText(text: string): ReactNode {
 
 /** Right-aligned bubble shared by user and steering rows. */
 function UserStyleBubble({
-  content, imageLoader, actions, pending = false, t,
+  content, imageLoader, actions, senderName, pending = false, t,
 }: {
   content: readonly unknown[]
   imageLoader: ImageLoader
   /** Optional IconActions (or similar) below the bubble; receives the joined text. */
   actions?: (text: string) => ReactNode
+  /** Name of the relaying session when this message was delivered window-to-window. */
+  senderName?: string | undefined
   /** Whether this is the Host-authoritative pre-admission steering projection. */
   pending?: boolean
   t: ChatViewSlotProps['t']
@@ -193,6 +195,9 @@ function UserStyleBubble({
   return (
     <div className={css.userRow} data-pending-steering={pending || undefined} data-time-hover-root>
       <div className={css.userStack}>
+        {senderName !== undefined && (
+          <div className={css.senderLine}>{t('message.fromSession', { name: senderName })}</div>
+        )}
         <ImageGallery images={images} load={imageLoader} align="end" labels={messageImageLabels(t)} />
         {showBubble && <div className={css.bubble}>
           {projectUserText(text)}
@@ -236,14 +241,24 @@ export function PendingSteeringBubble({ content, loadImage, t }: {
 
 /** User and admitted-steering keyed Chat renderer. */
 export const UserMessageNodeView = memo(function UserMessageNodeView({
-  node, loadImage, t,
+  node, loadImage, t, resolveSenderName,
 }: ChatNodeViewProps<'user' | 'steering'>) {
   const data = node.data
+  // Window-to-window deliveries carry the relaying session id; the line
+  // above the bubble names it so the receiving window shows who spoke.
+  const sender = typeof data.source === 'object' && data.source !== null
+    && typeof (data.source as { senderSessionId?: unknown }).senderSessionId === 'string'
+    ? (data.source as { senderSessionId: string }).senderSessionId
+    : undefined
+  const senderName = sender === undefined
+    ? undefined
+    : resolveSenderName?.(sender) ?? (sender.length > 12 ? sender.slice(0, 8) : sender)
   return (
     <UserStyleBubble
       content={data.content}
       imageLoader={loadImage}
       t={t}
+      senderName={senderName}
       actions={text => (
         <MessageIconActions
           text={text}

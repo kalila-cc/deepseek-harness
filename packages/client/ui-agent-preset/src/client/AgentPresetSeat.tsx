@@ -34,6 +34,8 @@ export interface AgentPresetSeatInjected {
   select: (id: string) => Promise<void>
   /** Clear the one-shot introduce cue once the chip has played it. */
   introduced: () => void
+  /** Persist one conductor scheduling mode for later conductor sessions. */
+  selectConductorMode: (mode: 'serial' | 'parallel') => Promise<void>
 }
 
 /* Introduce timeline: the icon eases in first (the CSS animation shares this
@@ -68,9 +70,10 @@ export type AgentPresetSeatProps =
  * @param props - composed slot props.
  * @returns the chip, or null when the deployment composes no presets.
  */
-export function AgentPresetSeat({ load, select, introduced, useAgentPresetSeat, t }: AgentPresetSeatProps) {
+export function AgentPresetSeat({ load, select, introduced, selectConductorMode, useAgentPresetSeat, t }: AgentPresetSeatProps) {
   const state = useAgentPresetSeat(snapshot => snapshot)
   const [open, setOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
 
   useEffect(() => {
     void load()
@@ -125,46 +128,103 @@ export function AgentPresetSeat({ load, select, introduced, useAgentPresetSeat, 
     )
     : label
 
+  // The scheduling-mode dropdown belongs to the conductor preset: it presets
+  // how THAT preset's sessions schedule their subtasks, and only shows when
+  // the deployment registers the `conductor` settings namespace.
+  const showMode = state.conductorMode !== undefined && state.current === 'conductor'
+  const modeLabel = state.conductorMode === 'parallel' ? t('parallel') : t('serial')
+
   return (
-    <Menu
-      open={open}
-      onClose={() => { setOpen(false) }}
-      items={state.options.map((option) => {
-        const text = presetDisplayText(option, t)
-        return {
-          id: option.id,
-          // Name and description together: the id alone never says what a
-          // preset does, which is why the roster carries display copy.
-          label: (
-            <span className={css.item}>
-              <span className={css.itemName}>{text.name}</span>
-              <span className={css.itemDesc}>{text.description ?? t('noDescription')}</span>
-            </span>
-          ),
-        }
-      })}
-      selectedId={state.current}
-      onSelect={(id) => {
-        setOpen(false)
-        void select(id)
-      }}
-      align="start"
-      portal
-      anchor={(
-        <button
-          type="button"
-          className={css.seat}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          title={state.error ?? t('seatHint')}
-          disabled={state.busy}
-          onClick={() => { setOpen(value => !value) }}
-        >
-          <IconAgentPresetOutline16 className={introducing ? `${css.seatIcon} ${css.introIcon}` : css.seatIcon} />
-          {shownLabel}
-          <IconChevronDownOutline14 className={css.chevron} />
-        </button>
+    <span className={css.seatRow}>
+      <Menu
+        open={open}
+        onClose={() => { setOpen(false) }}
+        items={state.options.map((option) => {
+          const text = presetDisplayText(option, t)
+          return {
+            id: option.id,
+            // Name and description together: the id alone never says what a
+            // preset does, which is why the roster carries display copy.
+            label: (
+              <span className={css.item}>
+                <span className={css.itemName}>{text.name}</span>
+                <span className={css.itemDesc}>{text.description ?? t('noDescription')}</span>
+              </span>
+            ),
+          }
+        })}
+        selectedId={state.current}
+        onSelect={(id) => {
+          setOpen(false)
+          void select(id)
+        }}
+        align="start"
+        portal
+        anchor={(
+          <button
+            type="button"
+            className={css.seat}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            title={state.error ?? t('seatHint')}
+            disabled={state.busy}
+            onClick={() => { setOpen(value => !value) }}
+          >
+            <IconAgentPresetOutline16 className={introducing ? `${css.seatIcon} ${css.introIcon}` : css.seatIcon} />
+            {shownLabel}
+            <IconChevronDownOutline14 className={css.chevron} />
+          </button>
+        )}
+      />
+      {showMode && (
+        <Menu
+          open={modeOpen}
+          onClose={() => { setModeOpen(false) }}
+          items={[
+            {
+              id: 'serial',
+              label: (
+                <span className={css.item}>
+                  <span className={css.itemName}>{t('serial')}</span>
+                  <span className={css.itemDesc}>{t('serialDescription')}</span>
+                </span>
+              ),
+            },
+            {
+              id: 'parallel',
+              label: (
+                <span className={css.item}>
+                  <span className={css.itemName}>{t('parallel')}</span>
+                  <span className={css.itemDesc}>{t('parallelDescription')}</span>
+                </span>
+              ),
+            },
+          ]}
+          selectedId={state.conductorMode}
+          onSelect={(id) => {
+            setModeOpen(false)
+            // The menu offers exactly the two registered modes.
+            /* v8 ignore next -- the two fixed items make any other id unreachable */
+            if (id === 'serial' || id === 'parallel') void selectConductorMode(id)
+          }}
+          align="start"
+          portal
+          anchor={(
+            <button
+              type="button"
+              className={css.modeSelect}
+              aria-haspopup="menu"
+              aria-expanded={modeOpen}
+              title={t('modeHint')}
+              disabled={state.busy}
+              onClick={() => { setModeOpen(value => !value) }}
+            >
+              <span className={css.modeName}>{modeLabel}</span>
+              <IconChevronDownOutline14 className={css.chevron} />
+            </button>
+          )}
+        />
       )}
-    />
+    </span>
   )
 }

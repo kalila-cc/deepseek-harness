@@ -445,6 +445,24 @@ describe('settings domain', () => {
       .toEqual({ default: 'minimal' })
   })
 
+  it('serves the conductor namespace, so the new-session seat can select its scheduling mode', async () => {
+    const ctx = await harness()
+    ctx.settings.register(settingsNamespace('conductor'), z.object({
+      mode: z.union(['serial', 'parallel'] as const).default('parallel'),
+    }))
+    const api = createApiProxy(ctx, DEFAULTS)
+
+    expect(expectOk(await api.settings.describe(request({}))).namespaces)
+      .toContainEqual(expect.objectContaining({ ns: 'conductor', value: { mode: 'parallel' } }))
+
+    const changed = expectOk(await api.settings.update(request({
+      ns: 'conductor', patch: { mode: 'serial' },
+    })))
+    expect(changed.value).toEqual({ mode: 'serial' })
+    expect(ctx.settings.describe().find(view => String(view.ns) === 'conductor')?.value)
+      .toEqual({ mode: 'serial' })
+  })
+
   it('refuses even a model-provider namespace once its directory entry is gone', async () => {
     const ctx = await harness({ configurableProviders: false })
     ctx.settings.register(NS, AdapterConfig)

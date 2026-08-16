@@ -15,7 +15,7 @@ export const UNGROUPED_KEY = ''
 /** Display label for the ungrouped bucket row. */
 export const UNGROUPED_LABEL = 'Ungrouped'
 
-/** One top-level session row in a group or the flat list. */
+/** One session row in a group or the flat list. */
 export interface SessionNode {
   id: SessionId
   /** Stored display title; the renderer substitutes the localized New Session label for blank rows. */
@@ -30,6 +30,8 @@ export interface SessionNode {
   /** Finished running while not selected and not yet opened (the green "done" reminder dot). */
   completed: boolean
   updatedAt: number
+  /** Indentation level: 0 for top-level sessions, 1+ for their subagent children. */
+  depth: number
 }
 
 /** Session order selected by the Workspace browser. */
@@ -80,6 +82,8 @@ export interface TreeView {
   expandedGroups: readonly string[]
   /** Browser-local order for Sessions without a backing Workspace account. */
   ungroupedOrder?: readonly string[]
+  /** Browser-local child order per parent session, for draggable subagent rows. */
+  subagentOrder?: Readonly<Record<string, readonly string[]>>
 }
 
 interface Group {
@@ -214,6 +218,7 @@ function groupByWorkspace(
 function sessionNode(
   s: SessionSummary,
   descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
+  depth = 0,
 ): SessionNode {
   return {
     id: s.id,
@@ -223,8 +228,94 @@ function sessionNode(
     runningSubagentCount: descendants.get(s.id)?.runningCount ?? 0,
     completed: s.completed === true,
     updatedAt: s.updatedAt,
+    depth,
     ...(s.pendingInteraction === undefined ? {} : { pendingInteraction: s.pendingInteraction }),
   }
+}
+
+/** Index subagent children by their durable parent session id. */
+function subagentChildren(byId: Readonly<Record<string, SessionSummary>>): ReadonlyMap<SessionId, SessionSummary[]> {
+  const children = new Map<SessionId, SessionSummary[]>()
+  for (const id of Object.keys(byId)) {
+    const session = byId[id]
+    if (session === undefined || session.origin !== 'subagent' || session.parentId === undefined) continue
+    const siblings = children.get(session.parentId) ?? []
+    siblings.push(session)
+    children.set(session.parentId, siblings)
+  }
+  return children
+}
+
+/**
+ * Order one parent's subagent children by the browser-local stored order,
+ * appending any child the stored order has not seen (for example children
+ * created after the last reorder) in discovery order.
+ * @param parent - the parent session id.
+ * @param children - parented subagent summaries in discovery order.
+ * @param subagentOrder - browser-local per-parent child order.
+ * @returns children in display order.
+ */
+function orderedSubagents(
+  parent: SessionId,
+  children: readonly SessionSummary[],
+  subagentOrder: Readonly<Record<string, readonly string[]>>,
+): readonly SessionSummary[] {
+  const stored = subagentOrder[parent]
+  if (stored === undefined) return children
+  if (stored.length === 0) return children
+  const byId = new Map<string, SessionSummary>(children.map(child => [child.id, child]))
+  const ordered: SessionSummary[] = []
+  for (const id of stored) {
+    const child = byId.get(id)
+    if (child === undefined) continue
+    ordered.push(child)
+    byId.delete(id)
+  }
+  for (const child of children) {
+    if (byId.has(child.id)) ordered.push(child)
+  }
+  return ordered
+}
+
+/**
+ * Expand top-level group members into session rows with their visible subagent
+ * children nested directly beneath their parent. Children stay with the parent
+ * wherever it appears (workspace group or ungrouped bucket), and a folded
+ * group renders no rows at all.
+ * @param members - the group's top-level session summaries.
+ * @param list - sessions list snapshot (current feeds the blank-row rule).
+ * @param archived - registry-global archive set.
+ * @param descendants - running-descendant counts per session.
+ * @param subagentOrder - browser-local per-parent child order.
+ * @returns rows in member order, each child immediately after its parent.
+ */
+function groupedSessionNodes(
+  members: readonly SessionSummary[],
+  list: SessionListState,
+  archived: ReadonlySet<SessionId>,
+  descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
+  subagentOrder: Readonly<Record<string, readonly string[]>>,
+): SessionNode[] {
+  const children = subagentChildren(list.byId)
+  const visited = new Set<SessionId>()
+  const rows: SessionNode[] = []
+  const visit = (session: SessionSummary, depth: number): void => {
+    // A child has exactly one durable parent, so a single-parent DFS cannot
+    // revisit a node unless stored parentage itself is corrupted.
+    /* v8 ignore next -- a single-parent chain cannot revisit a node */
+    if (visited.has(session.id)) return
+    visited.add(session.id)
+    rows.push(sessionNode(session, descendants, depth))
+    for (const child of orderedSubagents(session.id, children.get(session.id) ?? [], subagentOrder)) {
+      if (archived.has(child.id)) continue
+      // Blank rows are excluded except the selected provisional New Session,
+      // exactly as sessionVisible does for top-level rows.
+      if (child.blank && child.id !== list.current) continue
+      visit(child, depth + 1)
+    }
+  }
+  for (const member of members) visit(member, 0)
+  return rows
 }
 
 /**
@@ -266,7 +357,9 @@ export function deriveGroups(
       sessionCount: g.sessions.length,
       expanded,
       containsCurrent: g.key === currentGroup,
-      sessions: expanded ? g.sessions.map(session => sessionNode(session, descendants)) : [],
+      sessions: expanded
+        ? groupedSessionNodes(g.sessions, list, archived, descendants, view.subagentOrder ?? {})
+        : [],
     })
   }
   return groups

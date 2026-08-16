@@ -837,8 +837,7 @@ describe('WorkspaceBrowser', () => {
     expect(insertSessionBefore).toHaveBeenCalledTimes(1)
   })
 
-  it('persists Ungrouped drag order in both modes without writing a Host Workspace account', async () => {
-    const insertSessionBefore = vi.fn(async () => {})
+  it('persists Ungrouped drag order in both modes without writing a Host Workspace account', async () => {    const insertSessionBefore = vi.fn(async () => {})
     const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
     const b = mount({
       useSessions: hook(sessions),
@@ -906,6 +905,60 @@ describe('WorkspaceBrowser', () => {
     })
     fireDrag(two, 'drop', 155)
     expect(insertSessionBefore).toHaveBeenCalledWith(wid('alpha'), sid('one'), sid('two'))
+  })
+
+  it('reorders subagent children within their parent block when dropped on a sibling', () => {
+    const insertSessionBefore = vi.fn(async () => {})
+    const parent = summary('parent', 3)
+    const childA = { ...summary('child-a', 2), parentId: parent.id, origin: 'subagent' as const }
+    const childB = { ...summary('child-b', 1), parentId: parent.id, origin: 'subagent' as const }
+    const b = mount({
+      useSessions: hook(sessionState([parent, childA, childB])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['parent'])])),
+      insertSessionBefore,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    const childARow = screen.getByText('child-a').closest('[role="treeitem"]') as HTMLElement
+    const childBRow = screen.getByText('child-b').closest('[role="treeitem"]') as HTMLElement
+    childARow.getBoundingClientRect = () => ({
+      top: 140, bottom: 174, left: 0, right: 200, width: 200, height: 34, x: 0, y: 140, toJSON: () => ({}),
+    })
+    // Drop child-b onto the top half of child-a: the parent block stays put
+    // and the child order flips, entirely browser-local.
+    fireEvent.dragStart(childBRow, { dataTransfer: dragData() })
+    fireDrag(childARow, 'dragOver', 145)
+    fireDrag(childARow, 'drop', 145)
+    expect(b.store.getSnapshot().subagentOrderByParent?.['parent']).toEqual(['child-b', 'child-a'])
+    expect(insertSessionBefore).not.toHaveBeenCalled()
+    // The rows now render the flipped child order under the same parent.
+    const rows = screen.getAllByRole('treeitem').slice(1)
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining('parent'),
+      expect.stringContaining('child-b'),
+      expect.stringContaining('child-a'),
+    ])
+  })
+
+  it('persists a top-level drag to the host in updated mode too', () => {
+    const insertSessionBefore = vi.fn(async () => {})
+    const sessions = sessionState([summary('one', 3), summary('two', 2)])
+    mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+      insertSessionBefore,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    const rows = screen.getAllByRole('treeitem').slice(1)
+    const [one, two] = rows as [HTMLElement, HTMLElement]
+    two.getBoundingClientRect = () => ({
+      top: 150, bottom: 184, left: 0, right: 200, width: 200, height: 34, x: 0, y: 150, toJSON: () => ({}),
+    })
+    // The default 'updated' order still honors a manual drag: the host
+    // account receives the reorder instead of silently dropping it.
+    fireEvent.dragStart(one, { dataTransfer: dragData() })
+    fireDrag(two, 'dragOver', 175)
+    fireDrag(two, 'drop', 175)
+    expect(insertSessionBefore).toHaveBeenCalledWith(wid('alpha'), sid('one'), undefined)
   })
 
   it('drag end without a drop clears markers; bottom-half drop appends past the last row', () => {

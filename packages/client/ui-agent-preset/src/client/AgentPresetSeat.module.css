@@ -96,6 +96,44 @@
   color: var(--dsw-alias-label-caption);
 }
 
+/* One row: the preset chip with the conductor scheduling-mode dropdown
+   directly to its right, mirroring the chip's own pill geometry. */
+.seatRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.modeSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modeSelect:not(:disabled):hover,
+.modeSelect[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.modeSelect:disabled {
+  cursor: default;
+  color: var(--dsw-alias-label-quaternary);
+}
+
+.modeName {
+  font-weight: 400;
+}
+
 /* Menu rows carry the name over its description: the id alone never said what
    a preset does, which is why the metadata exists. */
 .item {

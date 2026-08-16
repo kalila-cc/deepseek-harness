@@ -27,6 +27,8 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-fs-search` | `glob`, `grep` | `ctx.tools`, `ctx.subprocess`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | glob and grep are unconditional discovery tools that spawn the packaged ripgrep binary (`@vscode/ripgrep`) through ctx.subprocess as ordinary foreground calls (never background jobs) — no host `rg` install and no shell layer. The catalog uses `sampleOverCapGlobResults: true`; deployments must choose that behavior explicitly. Capped results save the complete formatted list through the optional ctx.spillStore backend; returned locators are follow-up-readable/searchable when the backend exposes local paths in co-located deployments. |
 | `@deepseek-ai/dsh-tool-terminal` | `terminal_close`, `terminal_list`, `terminal_open`, `terminal_read`, `terminal_send`, `terminal_signal` | `ctx.tools`, `ctx.terminals`, `ctx.systemPrompt`, `ctx.jobs at call time for run_in_background` | `tool/call`, `tool/result` | - | The six terminal tools are opt-in and complement one-shot shell/filesystem tools. `terminal_send(run_in_background: true)` registers with `ctx.jobs`; TUI, named key sequences, BEL, resize, auto-start, and cross-agent sharing are absent from the schema. |
 | `@deepseek-ai/dsh-tool-goal` | `create_goal`, `get_goal`, `update_goal` | `ctx.tools`, `ctx.agents`, `ctx.goals`, `ctx.systemPrompt`, `a calling Agent in an authorized open turn` | `tool/call`, `goal/change for mutations`, `tool/result` | - | create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds. |
+| `@deepseek-ai/dsh-tool-conductor` | `conductor_handover`, `conductor_init`, `conductor_message`, `conductor_update`, `task_board`, `task_create`, `task_schedule`, `task_update` | `ctx.tools`, `ctx.agents`, `ctx.sessions`, `ctx.subagents`, `ctx.conductor`, `ctx.systemPrompt`, `a calling top-level Agent in an authorized open turn` | `tool/call`, `conductor/change for mutations`, `tool/result` | - | The conductor tools require the current conductor role: init demands a top-level session, and every other mutation demands the board's current conductorSessionId. Scheduling is deterministic (serial or parallel per the board mode); the round driver also schedules automatically at conductor quiescence. |
+| `@deepseek-ai/dsh-tool-task-report` | `task_report` | `ctx.tools`, `ctx.agents`, `ctx.sessions`, `ctx.subagents`, `ctx.conductor`, `ctx.systemPrompt`, `the reporting worker Agent in an authorized open turn` | `tool/call`, `conductor/change for the report`, `tool/result` | - | task_report admits only the reported task's assignee: the service validates the caller, commits the report into the current conductor's board, and delivers a framed message that wakes the conductor window. |
 | `@deepseek-ai/dsh-schedule` | `schedule_create`, `schedule_delete`, `schedule_list` | `ctx.tools`, `ctx.sessions`, `Session persistence`, `a future live root Agent` | `tool/call`, `schedule/change create or delete`, `tool/result` | - | Registered only inside live root Agent scopes created after the opt-in Schedule plugin loads. Version 1 accepts after_seconds, explicit absolute at, and bounded fixed-rate every_seconds, and discloses session-local delivery; management reads and mutations require the shared Session persistence barrier. |
 | `@deepseek-ai/dsh-tool-lsp` | `lsp` | `ctx.tools`, `ctx.lsp`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | The lsp tool keeps provider selection and language-server subprocesses behind ctx.lsp, so its model-visible schema stays stable across providers. Requires a registered provider (e.g. `@deepseek-ai/dsh-lsp-stdio`) at runtime; without one, a query returns the structured `LSP_UNAVAILABLE` error rather than changing the schema. |
 | `@deepseek-ai/dsh-tool-ralph` | `ralph` | `ctx.tools`, `ctx.workflowEngine`, `ctx.subagents`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents every fresh round)` | `tool/call`, `tool/result`, `workflow and child session events during execution` | - | A fixed foreground workflow starts one fresh structured child per round; the model selects only the immutable objective and an optional round cap. |
@@ -1031,6 +1033,299 @@ Update the exact current goal revision. edit, pause, and resume require a direct
 Source: [`packages/goal/tool-goal/src/index.ts`](../packages/goal/tool-goal/src/index.ts)
 
 create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.
+
+<a id="deepseek-aidsh-tool-conductor"></a>
+
+## `@deepseek-ai/dsh-tool-conductor`
+
+### `conductor_handover`
+
+Hand the conductor role to a fresh window: a new continuable session receives the full board snapshot and a briefing, and this window retires. Use it when this session has been compacted too many times to keep output quality high; the round driver also hands over automatically at the threshold. Announce the new window to the user.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Why this window is handing over (e.g. \"compacted N times\")."
+    }
+  },
+  "required": [
+    "reason"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `conductor_init`
+
+Create the conductor task board for a user-described objective: the calling top-level session becomes the conductor window. Analyze the objective, decompose it into subtasks with dependencies, and write the implementation plan outline. mode "serial" runs one worker at a time (stable, token-economical); mode "parallel" runs ready workers concurrently. Omit mode to honor the user's saved scheduling preference; pass it only when the user explicitly requests an override. Scheduling starts automatically once tasks exist.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "objective": {
+      "type": "string",
+      "description": "The concrete user-described task objective."
+    },
+    "mode": {
+      "type": "string",
+      "description": "serial runs one worker at a time; parallel runs ready workers concurrently. Omit to use the user's saved preference (parallel until changed).",
+      "enum": [
+        "serial",
+        "parallel"
+      ]
+    },
+    "plan_outline": {
+      "type": "string",
+      "description": "The implementation plan outline: the module/step breakdown and its order."
+    },
+    "max_parallel_workers": {
+      "type": "number",
+      "description": "Parallel-mode cap on concurrently in-progress tasks. Defaults to the deployment value."
+    }
+  },
+  "required": [
+    "objective"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `conductor_message`
+
+Send a message from the conductor to one worker window by its session id (the assignee of a task in this board). The message becomes the worker's next turn. Returns no answer — only confirmation of delivery.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "worker_id": {
+      "type": "string",
+      "description": "The worker session id (a task assignee from task_board)."
+    },
+    "message": {
+      "type": "string",
+      "description": "The message to deliver as the worker's next turn."
+    }
+  },
+  "required": [
+    "worker_id",
+    "message"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `conductor_update`
+
+Update the board itself: edit (objective and/or plan_outline), set_mode (mode and/or max_parallel_workers), pause, resume, complete, or block (reason required).
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "edit | set_mode | pause | resume | complete | block",
+      "enum": [
+        "edit",
+        "set_mode",
+        "pause",
+        "resume",
+        "complete",
+        "block"
+      ]
+    },
+    "objective": {
+      "type": "string",
+      "description": "Replacement objective; valid only with action edit."
+    },
+    "plan_outline": {
+      "type": "string",
+      "description": "Replacement plan outline; valid only with action edit."
+    },
+    "mode": {
+      "type": "string",
+      "description": "Replacement mode; valid only with action set_mode.",
+      "enum": [
+        "serial",
+        "parallel"
+      ]
+    },
+    "max_parallel_workers": {
+      "type": "number",
+      "description": "Replacement parallel cap; valid only with action set_mode."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Blocking explanation; required only with action block."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `task_board`
+
+Read the current conductor task board: objective, plan outline, mode, phase, conductor session id, handover count, activation, this session's compaction count, and every task with its status, dependencies, assignee, and report history. Call this before updating the board or a task, and after every worker report wakes you.
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `task_create`
+
+Add tasks to the conductor board. Each task must have a short imperative title and a self-contained description a worker can execute without further context. depends_on names existing task ids that must reach done before this task may start; use it to express the dependency order you derived from the objective. Scheduling starts automatically once tasks exist.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short imperative task title."
+          },
+          "description": {
+            "type": "string",
+            "description": "Self-contained work description a worker can execute without further context."
+          },
+          "depends_on": {
+            "type": "array",
+            "description": "Existing task ids that must reach done before this task may start.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "title",
+          "description"
+        ]
+      }
+    }
+  },
+  "required": [
+    "tasks"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `task_schedule`
+
+Trigger one scheduling pass now: mark dependency-blocked tasks blocked, then spawn worker windows for the ready tasks per the board mode (serial: one; parallel: up to the cap). Scheduling also runs automatically whenever the board is active and the conductor window is idle, so use this only to force a pass before the next automatic one.
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+### `task_update`
+
+Update one task's status: start (in-progress), done, blocked (reason required), unblock (back to todo), or reassign (back to todo without assignee so the scheduler assigns a fresh worker window; prior reports stay in the briefing).
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Task id from task_board."
+    },
+    "action": {
+      "type": "string",
+      "description": "start | done | blocked | unblock | reassign",
+      "enum": [
+        "start",
+        "done",
+        "blocked",
+        "unblock",
+        "reassign"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Blocking explanation; required only with action blocked."
+    }
+  },
+  "required": [
+    "task_id",
+    "action"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts`](../packages/conductor/tool-conductor/src/index.ts)
+
+The conductor tools require the current conductor role: init demands a top-level session, and every other mutation demands the board's current conductorSessionId. Scheduling is deterministic (serial or parallel per the board mode); the round driver also schedules automatically at conductor quiescence.
+
+<a id="deepseek-aidsh-tool-task-report"></a>
+
+## `@deepseek-ai/dsh-tool-task-report`
+
+### `task_report`
+
+Report about your assigned task to the conductor. Use status "done" once with a self-contained summary of what you changed and where when you finish; "blocked" with the exact condition when a blocker needs the conductor's or the user's decision; "progress" for significant interim findings. Reporting does not end your turn and does not grant you anything: after your final report, end your turn and wait for follow-up messages. A failed call may still have arrived, so do not blindly repeat it.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The task id from your worker briefing."
+    },
+    "status": {
+      "type": "string",
+      "description": "progress | done | blocked",
+      "enum": [
+        "progress",
+        "done",
+        "blocked"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "description": "Self-contained summary, blocker, or progress note for the conductor."
+    }
+  },
+  "required": [
+    "task_id",
+    "status",
+    "message"
+  ]
+}
+```
+
+Source: [`packages/conductor/tool-task-report/src/index.ts`](../packages/conductor/tool-task-report/src/index.ts)
+
+task_report admits only the reported task's assignee: the service validates the caller, commits the report into the current conductor's board, and delivers a framed message that wakes the conductor window.
 
 <a id="deepseek-aidsh-schedule"></a>
 

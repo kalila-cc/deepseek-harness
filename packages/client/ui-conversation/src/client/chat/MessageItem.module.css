@@ -16,6 +16,17 @@
   min-width: 0;
   max-width: min(525px, 82%);
 }
+
+/* One small attribution line above a relayed window-to-window bubble. */
+.senderLine {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .bubble {
   /* 525px cap inside the 736 column; percentage keeps narrow windows sane. */
   max-width: 100%;

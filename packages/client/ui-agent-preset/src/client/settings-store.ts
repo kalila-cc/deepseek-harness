@@ -14,6 +14,16 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 export const AGENT_PRESET_SETTINGS_NS = 'agent-presets'
 
 /**
+ * The conductor scheduling-mode namespace on the host wire. Mirrors
+ * `CONDUCTOR_SETTINGS_NAMESPACE` in the host conductor domain; kept as a
+ * literal here because a browser surface must not depend on a host package.
+ */
+export const CONDUCTOR_SETTINGS_NS = 'conductor'
+
+/** One selectable conductor scheduling mode. */
+export type ConductorMode = 'serial' | 'parallel'
+
+/**
  * Human text for a rejected wire call. A transport failure rejects with an
  * Error; a host or a runtime can reject with anything, and the surface still
  * has to say something.
@@ -47,6 +57,44 @@ export async function writeDefaultPreset(
     return messageOf(error)
   }
   return response.result.ok ? undefined : response.result.error.message
+}
+
+/**
+ * Persist the user-preferred conductor scheduling mode.
+ *
+ * The mode is a settings field rather than a tool argument so a person can
+ * preset serial or parallel execution once, for every conductor session they
+ * start later; an explicit mode in a session's own instructions still wins.
+ * @param api - the settings wire face.
+ * @param mode - the scheduling mode to make the default.
+ * @returns the failure message, or undefined once the write landed.
+ */
+export async function writeConductorMode(
+  api: Pick<IApiClient, 'settings'>,
+  mode: ConductorMode,
+): Promise<string | undefined> {
+  let response
+  try {
+    response = await api.settings.update({ ns: CONDUCTOR_SETTINGS_NS, patch: { mode } })
+  } catch (error) {
+    return messageOf(error)
+  }
+  return response.result.ok ? undefined : response.result.error.message
+}
+
+/** The current value of the `conductor` settings namespace, when registered. */
+export function conductorModeOf(descriptors: readonly unknown[]): ConductorMode | undefined {
+  const descriptor = descriptors.find((entry) => {
+    if (typeof entry !== 'object' || entry === null) return false
+    return (entry as { ns?: unknown }).ns === CONDUCTOR_SETTINGS_NS
+  })
+  const value = typeof descriptor === 'object' && descriptor !== null
+    ? (descriptor as { value?: unknown }).value
+    : undefined
+  const mode = typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as { mode?: unknown }).mode
+    : undefined
+  return mode === 'serial' || mode === 'parallel' ? mode : undefined
 }
 
 /** One selectable preset. */
@@ -174,6 +222,12 @@ export interface AgentPresetSettingsState {
   writable: boolean
   currentValue: string
   options: readonly AgentPresetOption[]
+  /**
+   * The user-preferred conductor scheduling mode, when the deployment
+   * registers the `conductor` settings namespace; `undefined` hides the mode
+   * control from deployments that do not compose the conductor domain.
+   */
+  conductorMode: ConductorMode | undefined
 }
 
 const INITIAL: AgentPresetSettingsState = {
@@ -184,6 +238,7 @@ const INITIAL: AgentPresetSettingsState = {
   writable: true,
   currentValue: '',
   options: [],
+  conductorMode: undefined,
 }
 
 /** Reads the roster and persists the chosen default. */
@@ -217,6 +272,8 @@ export class AgentPresetSettingsController {
       // this browser may write the choice down. A non-loopback browser reaches
       // neither method, so a refused describe leaves the row read-only rather
       // than offering a control whose write answers `settings-not-exposed`.
+      // The same describe carries the conductor scheduling mode the host
+      // resolves for sessions that name none.
       const described = await this.api.settings.describe({})
       this.set({
         status: 'ready',
@@ -226,6 +283,9 @@ export class AgentPresetSettingsController {
         // A roster can mark nothing default: settings can name a preset that
         // was since deleted, and the picker still has to show something.
         currentValue: presets.find(preset => preset.isDefault)?.id ?? first.id,
+        conductorMode: described.result.ok
+          ? conductorModeOf(described.result.value.namespaces)
+          : undefined,
       })
     } catch (error) {
       this.set({ status: 'error', error: messageOf(error) })
@@ -251,5 +311,24 @@ export class AgentPresetSettingsController {
     // Re-read rather than trust the patch: the host resolves the default
     // through the same roster the row displays.
     await this.load()
+  }
+
+  /**
+   * Persist one conductor scheduling mode for conductor sessions created
+   * later. Running boards keep the mode they began with; an explicit mode in
+   * a session's own instructions still overrides this preset.
+   * @param mode - the scheduling mode to make the default.
+   * @returns once the write settled.
+   */
+  async selectConductorMode(mode: ConductorMode): Promise<void> {
+    const before = this.store.getSnapshot()
+    if (before.status === 'saving' || mode === before.conductorMode) return
+    this.set({ status: 'saving', error: null, conductorMode: mode })
+    const failure = await writeConductorMode(this.api, mode)
+    if (failure !== undefined) {
+      this.set({ status: 'ready', conductorMode: before.conductorMode, error: failure })
+      return
+    }
+    this.set({ status: 'ready', error: null })
   }
 }

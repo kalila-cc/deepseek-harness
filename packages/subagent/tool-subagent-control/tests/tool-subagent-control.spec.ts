@@ -196,6 +196,39 @@ describe('dsh-tool-subagent-control', () => {
     expect(text(result)).toContain('another parent session')
   })
 
+  it('rejects direct sibling-to-sibling messages', async () => {
+    const releaseSibling = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('target done') },
+      { chunks: textResponse('sibling working'), gate: releaseSibling.promise },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    const target = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'target',
+      request: { prompt: [{ type: 'text', text: 'target work' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, target.childId)
+    const sibling = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'sibling',
+      request: { prompt: [{ type: 'text', text: 'sibling work' }], parent },
+      signal: testToolSignal,
+    })
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+    const siblingAgent = ctx.agents.get(sibling.childId)!
+
+    const result = await callTool(ctx, 'send_message', {
+      subagent_id: target.childId,
+      message: 'contact target directly',
+    }, siblingAgent)
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('another parent session')
+    releaseSibling.resolve(undefined)
+  })
+
   it('fails loud when invoked without a calling agent', async () => {
     const { ctx } = await setup([])
     const result = await callTool(ctx, 'send_message', { subagent_id: 'x', message: 'y' })

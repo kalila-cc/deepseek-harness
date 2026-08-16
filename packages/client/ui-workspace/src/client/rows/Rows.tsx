@@ -374,6 +374,9 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
   const primaryStatus = statuses[0]
   const showStatus = primaryStatus.state !== 'done' || row.completed
   const [menuOpen, setMenuOpen] = useState(false)
+  // Subagent rows drag as part of their parent block: the browser resolves a
+  // child drag to its top-level ancestor before reordering.
+  const rowDrag = drag
   // Archive hides the row through the registry-global archive set and never
   // touches the session log, so it is not styled as destructive and needs no
   // confirmation dialog.
@@ -389,34 +392,35 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
       className={clsx(
         css.sessionRow, selected && css.selected, menuOpen && css.menuOpen,
         flat && !showStatus && css.flatSessionRowWithoutStatus,
-        drag?.marker === 'before' && css.dropBefore, drag?.marker === 'after' && css.dropAfter,
+        rowDrag?.marker === 'before' && css.dropBefore, rowDrag?.marker === 'after' && css.dropAfter,
       )}
+      style={node.depth > 0 ? { paddingLeft: `${12 + node.depth * 18}px` } : undefined}
       role="treeitem"
       aria-selected={selected}
       onClick={() => { onOpen(node.id) }}
-      draggable={drag !== undefined}
-      onDragStart={drag === undefined
+      draggable={rowDrag !== undefined}
+      onDragStart={rowDrag === undefined
         ? undefined
         : (e) => {
           e.dataTransfer.effectAllowed = 'move'
           e.dataTransfer.setData('text/plain', node.id)
-          drag.start()
+          rowDrag.start()
         }}
-      onDragEnd={drag?.end}
-      onDragOver={drag === undefined
+      onDragEnd={rowDrag?.end}
+      onDragOver={rowDrag === undefined
         ? undefined
         : (e) => {
-          if (!drag.active) return
+          if (!rowDrag.active) return
           e.preventDefault()
           e.dataTransfer.dropEffect = 'move'
-          drag.hover(rowHalf(e))
+          rowDrag.hover(rowHalf(e))
         }}
-      onDrop={drag === undefined
+      onDrop={rowDrag === undefined
         ? undefined
         : (e) => {
-          if (!drag.active) return
+          if (!rowDrag.active) return
           e.preventDefault()
-          drag.drop(rowHalf(e))
+          rowDrag.drop(rowHalf(e))
         }}
     >
       {/* Pending interaction and own or descendant activity outrank the

@@ -12,7 +12,7 @@
 // ChatNodeSeat subscribes to one Node key, so Assistant deltas and Tool
 // lifecycle updates replace only their own row without remounting it.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationTimelineSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
@@ -153,6 +153,15 @@ export function ChatView({
   const inbox = useSession(s => s.queue)
   // Workspace root off the session list row: path summaries display relative to it.
   const cwd = useSessions(s => s.byId[sessionId]?.cwd)
+  // Name one relaying session for window-to-window message attribution. The
+  // callback stays referentially stable while the session list does, so the
+  // memoized node renderers keep skipping.
+  const sessionRows = useSessions(s => s.byId)
+  const resolveSenderName = useCallback(
+    (senderSessionId: string): string | undefined =>
+      (sessionRows as Record<string, { displayTitle?: string } | undefined>)[senderSessionId]?.displayTitle,
+    [sessionRows],
+  )
   const running = useSession(s => s.running)
   const openState = useSession(s => s.openState)
   const openError = useSession(s => s.openError)
@@ -391,6 +400,7 @@ export function ChatView({
               forkAt={forkAt}
               loadImage={loadImage}
               fileMentions={fileMentions}
+              resolveSenderName={resolveSenderName}
               renderSlot={renderSlot}
               t={t}
             />

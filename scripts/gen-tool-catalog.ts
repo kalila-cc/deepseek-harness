@@ -51,6 +51,9 @@ import * as ToolStrReplaceEditor from '@deepseek-ai/dsh-tool-str-replace-editor'
 import TerminalSessionService from '@deepseek-ai/dsh-terminal'
 import * as ToolPty from '@deepseek-ai/dsh-tool-terminal'
 import * as ToolGoal from '@deepseek-ai/dsh-tool-goal'
+import ConductorService from '@deepseek-ai/dsh-conductor'
+import * as ToolConductor from '@deepseek-ai/dsh-tool-conductor'
+import * as ToolTaskReport from '@deepseek-ai/dsh-tool-task-report'
 import * as ToolSchedule from '@deepseek-ai/dsh-schedule'
 import Lsp from '@deepseek-ai/dsh-lsp'
 import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
@@ -354,6 +357,44 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-conductor',
+    dir: 'tool-conductor',
+    source: 'packages/conductor/tool-conductor/src/index.ts',
+    requires: ['ctx.tools', 'ctx.agents', 'ctx.sessions', 'ctx.subagents', 'ctx.conductor', 'ctx.systemPrompt', 'a calling top-level Agent in an authorized open turn'],
+    writes: ['tool/call', 'conductor/change for mutations', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SessionStore)
+      ctx.provide('subagents', {
+        startContinuable: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
+        followup: () => Promise.reject(new Error('tool-catalog provider cannot deliver a followup')),
+      } as never)
+      await ctx.plugin(ConductorService)
+      await ctx.plugin(ToolConductor)
+    },
+    note:
+      'The conductor tools require the current conductor role: init demands a top-level session, and every other mutation demands the board\'s current conductorSessionId. Scheduling is deterministic (serial or parallel per the board mode); the round driver also schedules automatically at conductor quiescence.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-task-report',
+    dir: 'tool-task-report',
+    source: 'packages/conductor/tool-task-report/src/index.ts',
+    requires: ['ctx.tools', 'ctx.agents', 'ctx.sessions', 'ctx.subagents', 'ctx.conductor', 'ctx.systemPrompt', 'the reporting worker Agent in an authorized open turn'],
+    writes: ['tool/call', 'conductor/change for the report', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SessionStore)
+      ctx.provide('subagents', {
+        startContinuable: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
+        followup: () => Promise.reject(new Error('tool-catalog provider cannot deliver a followup')),
+      } as never)
+      await ctx.plugin(ConductorService)
+      await ctx.plugin(ToolTaskReport)
+    },
+    note:
+      'task_report admits only the reported task\'s assignee: the service validates the caller, commits the report into the current conductor\'s board, and delivers a framed message that wakes the conductor window.',
   },
   {
     pkg: '@deepseek-ai/dsh-schedule',

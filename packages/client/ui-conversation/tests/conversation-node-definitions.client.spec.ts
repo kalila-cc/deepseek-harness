@@ -514,6 +514,48 @@ describe('built-in conversation node Definitions', () => {
     })
   })
 
+  it('classifies an attributed inter-session relay as a user-style message', () => {
+    const value = assembler([
+      at(1, 'user/message', {
+        ...textMessage('relay-message', 'continue with the next task'),
+        source: { kind: 'coordinator', form: 'relay', senderSessionId: 'parent-session' },
+      }, { surfaceOp: 'append' }),
+    ])
+
+    expect(node(snapshot(value), 'user')?.data).toMatchObject({
+      kind: 'user',
+      content: [{ type: 'text', text: 'continue with the next task' }],
+      source: { kind: 'coordinator', form: 'relay', senderSessionId: 'parent-session' },
+    })
+    expect(node(snapshot(value), 'context')).toBeUndefined()
+  })
+
+  it('classifies an attributed child settlement report as a user-style message', () => {
+    const value = assembler([
+      at(1, 'user/message', {
+        ...textMessage('settled-notice', 'worker finished'),
+        content: [
+          { type: 'text', text: 'worker finished' },
+          { type: 'text', text: 'Its closing message:' },
+          { type: 'text', text: 'completed task T1' },
+        ],
+        source: {
+          kind: 'subagent-settled', form: 'notice', summary: 'worker finished',
+          senderSessionId: 'child-session',
+        },
+      }, { surfaceOp: 'append' }),
+    ])
+
+    expect(node(snapshot(value), 'user')?.data).toMatchObject({
+      kind: 'user',
+      source: {
+        kind: 'subagent-settled', form: 'notice', senderSessionId: 'child-session',
+      },
+      content: [{ type: 'text', text: 'completed task T1' }],
+    })
+    expect(node(snapshot(value), 'context')).toBeUndefined()
+  })
+
   it('keeps replacement copies out of Chat business nodes', () => {
     const value = assembler([
       at(1, 'turn/start', { turn: 1 }),

@@ -31,6 +31,7 @@ const ROW_READY: AgentPresetSettingsState = {
   // `mine` deliberately names itself nothing: the row must fall back to the
   // id for a preset whose author wrote no metadata.
   options: [{ id: 'standard', trust: 'system', name: '标准模式' }, { id: 'mine', trust: 'user' }],
+  conductorMode: undefined,
 }
 
 const SEAT_READY: AgentPresetSeatState = {
@@ -42,11 +43,16 @@ const SEAT_READY: AgentPresetSeatState = {
   busy: false,
   error: null,
   introduce: false,
+  conductorMode: undefined,
 }
 
 function renderRow(state: Partial<AgentPresetSettingsState> = {}) {
   const store = createSnapshotStore<AgentPresetSettingsState>({ ...ROW_READY, ...state })
-  const actions = { load: vi.fn(() => Promise.resolve()), select: vi.fn(() => Promise.resolve()) }
+  const actions = {
+    load: vi.fn(() => Promise.resolve()),
+    select: vi.fn(() => Promise.resolve()),
+    selectConductorMode: vi.fn(() => Promise.resolve()),
+  }
   render(<AgentPresetRow {...({
     ...actions,
     useAgentPreset: bindSnapshotSelector(store),
@@ -61,6 +67,7 @@ function renderSeat(state: Partial<AgentPresetSeatState> = {}) {
     load: vi.fn(() => Promise.resolve()),
     select: vi.fn(() => Promise.resolve()),
     introduced: vi.fn(),
+    selectConductorMode: vi.fn(() => Promise.resolve()),
   }
   render(<AgentPresetSeat {...({
     ...actions,
@@ -156,6 +163,60 @@ describe('the General-settings row', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('shows the scheduling-mode control for the conductor preset', () => {
+    renderRow({
+      currentValue: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'serial',
+    })
+
+    expect(screen.getByRole('group', { name: en.modeTitle })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.serial })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.parallel })).toBeTruthy()
+    expect(screen.getByText(en.modeHint)).toBeTruthy()
+  })
+
+  it('writes the picked scheduling mode', () => {
+    const actions = renderRow({
+      currentValue: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'serial',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: en.parallel }))
+
+    expect(actions.selectConductorMode).toHaveBeenCalledWith('parallel')
+  })
+
+  it('highlights the parallel mode and writes the serial pick back', () => {
+    const actions = renderRow({
+      currentValue: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'parallel',
+    })
+
+    expect(screen.getByRole('button', { name: en.parallel })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.serial }))
+
+    expect(actions.selectConductorMode).toHaveBeenCalledWith('serial')
+  })
+
+  it('hides the scheduling-mode control for other presets', () => {
+    renderRow({ currentValue: 'standard', conductorMode: 'parallel' })
+
+    expect(screen.queryByRole('group')).toBeNull()
+  })
+
+  it('hides the control when the conductor namespace is not registered', () => {
+    renderRow({
+      currentValue: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: undefined,
+    })
+
+    expect(screen.queryByRole('group')).toBeNull()
   })
 
   it('says it is loading before the roster answers', () => {
@@ -362,6 +423,65 @@ describe('the chip introduce cue', () => {
 
     expect(actions.introduced).toHaveBeenCalledTimes(1)
     expect(delayedChars()).toHaveLength(0)
+  })
+
+  it('shows the scheduling-mode dropdown beside the conductor chip', () => {
+    renderSeat({
+      current: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'parallel',
+    })
+
+    // The dropdown names the current mode and opens the serial/parallel pair.
+    expect(screen.getByRole('button', { name: en.parallel })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.parallel }))
+    expect(screen.getByText(en.serial)).toBeTruthy()
+    expect(screen.getByText(en.serialDescription)).toBeTruthy()
+    expect(screen.getByText(en.parallelDescription)).toBeTruthy()
+  })
+
+  it('writes the scheduling mode picked from the seat dropdown', () => {
+    const actions = renderSeat({
+      current: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'parallel',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: en.parallel }))
+    fireEvent.click(screen.getByText(en.serial))
+
+    expect(actions.selectConductorMode).toHaveBeenCalledWith('serial')
+  })
+
+  it('closes the mode dropdown on an outside dismissal without picking', () => {
+    renderSeat({
+      current: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: 'parallel',
+    })
+    fireEvent.click(screen.getByRole('button', { name: en.parallel }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.getByRole('button', { name: en.parallel }).getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('hides the scheduling-mode dropdown for other presets', () => {
+    renderSeat({ current: 'standard', conductorMode: 'parallel' })
+
+    expect(screen.queryByRole('button', { name: en.parallel })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.serial })).toBeNull()
+  })
+
+  it('hides the dropdown when the conductor namespace is not registered', () => {
+    renderSeat({
+      current: 'conductor',
+      options: [{ id: 'conductor', trust: 'system', name: '指挥家模式' }],
+      conductorMode: undefined,
+    })
+
+    expect(screen.queryByRole('button', { name: en.parallel })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.serial })).toBeNull()
   })
 })
 

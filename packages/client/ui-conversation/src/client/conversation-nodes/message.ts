@@ -3,7 +3,8 @@ import type {
   ContextMessageNode, ConversationNodeDefinition, SteeringMessageNode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  contextForm, contextProvenance, isAppendSurfaceEvent, isReplacementSurfaceEvent,
+  contextForm, contextProvenance, isAppendSurfaceEvent, isUserVisibleInterSessionSource,
+  isReplacementSurfaceEvent, userVisibleInterSessionContent,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { InboxState } from './inbox.ts'
 import { chatNode } from './common.ts'
@@ -39,7 +40,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   start: (_context, match, reader) => {
     if (match.event.type !== 'user/message') throw new Error('input-message start requires user/message')
     const event = match.event
-    if (event.data.source.kind !== 'user') {
+    if (event.data.source.kind !== 'user' && !isUserVisibleInterSessionSource(event.data.source)) {
       return {
         kind: 'context',
         seq: event.seq,
@@ -57,14 +58,14 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         messageId: event.data.id,
         seq: event.seq,
         time: event.time,
-        content: event.data.content,
+        content: userVisibleInterSessionContent(event.data.source, event.data.content),
         source: event.data.source,
       }
       : {
         kind: 'user',
         seq: event.seq,
         time: event.time,
-        content: event.data.content,
+        content: userVisibleInterSessionContent(event.data.source, event.data.content),
         source: event.data.source,
       }
   },

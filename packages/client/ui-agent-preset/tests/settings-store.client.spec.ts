@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import {
-  AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController, messageOf,
+  AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController, conductorModeOf, messageOf,
 } from '../src/client/settings-store.ts'
 import { AgentPresetSeatController } from '../src/client/seat-store.ts'
 import type { SeatSessionSummary } from '../src/client/seat-store.ts'
@@ -24,6 +24,7 @@ function fakeApi(
     failList?: string
     failWriteWith?: Error
     readOnly?: boolean
+    conductor?: 'serial' | 'parallel'
   } = {},
 ): IApiClient {
   return {
@@ -39,7 +40,13 @@ function fakeApi(
         rpcId: 'r',
         result: {
           ok: true as const,
-          value: { writable: options.readOnly !== true, hasDocument: true, namespaces: [] },
+          value: {
+            writable: options.readOnly !== true,
+            hasDocument: true,
+            namespaces: options.conductor === undefined
+              ? []
+              : [{ ns: 'conductor', schema: {}, value: { mode: options.conductor }, revision: 0, applies: 'live' }],
+          },
         },
       }),
       update: (payload: { ns: string; patch: unknown }) => {
@@ -235,12 +242,123 @@ describe('the agent-preset settings controller', () => {
   })
 })
 
+describe('the conductor scheduling mode control', () => {
+  it('reads the user scheduling mode from the settings describe', async () => {
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ], { conductor: 'parallel' }))
+
+    await controller.load()
+
+    expect(controller.store.getSnapshot().conductorMode).toBe('parallel')
+  })
+
+  it('leaves the mode unset when the namespace is not registered', async () => {
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ]))
+
+    await controller.load()
+
+    expect(controller.store.getSnapshot().conductorMode).toBeUndefined()
+  })
+
+  it('writes only the mode field, into the conductor namespace', async () => {
+    const writes: Recorded[] = []
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ], { writes, conductor: 'serial' }))
+    await controller.load()
+
+    await controller.selectConductorMode('parallel')
+
+    expect(writes).toEqual([{ ns: 'conductor', patch: { mode: 'parallel' } }])
+    expect(controller.store.getSnapshot().conductorMode).toBe('parallel')
+  })
+
+  it('restores the previous mode and surfaces the message when the write fails', async () => {
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ], { failWrite: 'read-only settings', conductor: 'serial' }))
+    await controller.load()
+
+    await controller.selectConductorMode('parallel')
+
+    const state = controller.store.getSnapshot()
+    expect(state.conductorMode).toBe('serial')
+    expect(state.error).toBe('read-only settings')
+    expect(state.status).toBe('ready')
+  })
+
+  it('ignores a pick of the mode already selected', async () => {
+    const writes: Recorded[] = []
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ], { writes, conductor: 'serial' }))
+    await controller.load()
+
+    await controller.selectConductorMode('serial')
+
+    expect(writes).toEqual([])
+  })
+
+  it('ignores a malformed or absent conductor value in the describe', () => {
+    expect(conductorModeOf([])).toBeUndefined()
+    expect(conductorModeOf([{ ns: 'conductor', value: { mode: 'fast' } }])).toBeUndefined()
+    expect(conductorModeOf([{ ns: 'conductor', value: 'parallel' }])).toBeUndefined()
+    expect(conductorModeOf([{ ns: 'other', value: { mode: 'parallel' } }])).toBeUndefined()
+    expect(conductorModeOf([null, { ns: 'conductor', value: { mode: 'parallel' } }])).toBe('parallel')
+  })
+
+  it('reports a transport that rejects mid-mode-write and keeps the old mode', async () => {
+    const controller = new AgentPresetSettingsController(fakeApi([
+      { id: 'conductor', trust: 'system', isDefault: true },
+    ], { failWriteWith: new Error('socket closed'), conductor: 'serial' }))
+    await controller.load()
+
+    await controller.selectConductorMode('parallel')
+
+    expect(controller.store.getSnapshot()).toMatchObject({ conductorMode: 'serial', error: 'socket closed' })
+  })
+
+  it('leaves the mode unset and the row read-only when describe is refused', async () => {
+    const controller = new AgentPresetSettingsController({
+      agentPresets: {
+        list: () => Promise.resolve({
+          rpcId: 'r',
+          result: { ok: true as const, value: { presets: [{ id: 'conductor', trust: 'system', isDefault: true }] } },
+        }),
+      },
+      settings: {
+        describe: () => Promise.resolve({
+          rpcId: 'r',
+          result: { ok: false as const, error: { code: 'internal', message: 'not exposed', details: {} } },
+        }),
+      },
+    } as unknown as IApiClient)
+
+    await controller.load()
+
+    const state = controller.store.getSnapshot()
+    expect(state.writable).toBe(false)
+    expect(state.conductorMode).toBeUndefined()
+  })
+})
+
 describe('the new-session chip controller', () => {
   /** A chip over a current session the test can move. */
   function chip(
     presets: { id: string; trust: 'system' | 'user'; isDefault: boolean }[],
     current: { id: string; blank: boolean; agentPreset?: string } | undefined,
-    options: { writes?: Recorded[]; failSelect?: string; failList?: string; throwOn?: 'list' | 'select' } = {},
+    options: {
+      writes?: Recorded[]
+      failSelect?: string
+      failList?: string
+      throwOn?: 'list' | 'select'
+      conductor?: 'serial' | 'parallel'
+      failModeWrite?: string
+      failDescribe?: string
+    } = {},
   ): AgentPresetSeatController {
     const api = {
       agentPresets: {
@@ -256,6 +374,29 @@ describe('the new-session chip controller', () => {
           return Promise.resolve(options.failSelect === undefined
             ? { rpcId: 'r', result: { ok: true as const, value: { agentPreset: payload.agentPreset } } }
             : { rpcId: 'r', result: { ok: false as const, error: { code: 'agent-preset-locked', message: options.failSelect, details: {} } } })
+        },
+      },
+      settings: {
+        describe: () => Promise.resolve(options.failDescribe === undefined
+          ? {
+            rpcId: 'r',
+            result: {
+              ok: true as const,
+              value: {
+                writable: true,
+                hasDocument: true,
+                namespaces: options.conductor === undefined
+                  ? []
+                  : [{ ns: 'conductor', schema: {}, value: { mode: options.conductor }, revision: 0, applies: 'live' }],
+              },
+            },
+          }
+          : { rpcId: 'r', result: { ok: false as const, error: { code: 'internal', message: options.failDescribe, details: {} } } }),
+        update: (payload: { ns: string; patch: unknown }) => {
+          options.writes?.push({ ns: payload.ns, patch: payload.patch })
+          return Promise.resolve(options.failModeWrite === undefined
+            ? { rpcId: 'r', result: { ok: true as const, value: {} } }
+            : { rpcId: 'r', result: { ok: false as const, error: { code: 'internal', message: options.failModeWrite, details: {} } } })
         },
       },
     } as unknown as IApiClient
@@ -432,6 +573,74 @@ describe('the new-session chip controller', () => {
     await controller.load()
 
     expect(controller.store.getSnapshot().error).toBe('socket closed')
+  })
+
+  it('reads the conductor scheduling mode into the chip', async () => {
+    const controller = chip(ROSTER, undefined, { conductor: 'parallel' })
+
+    await controller.load()
+
+    expect(controller.store.getSnapshot().conductorMode).toBe('parallel')
+  })
+
+  it('writes a picked scheduling mode from the chip', async () => {
+    const writes: Recorded[] = []
+    const controller = chip(ROSTER, undefined, { writes, conductor: 'parallel' })
+    await controller.load()
+
+    await controller.selectConductorMode('serial')
+
+    expect(writes).toEqual([{ ns: 'conductor', patch: { mode: 'serial' } }])
+    expect(controller.store.getSnapshot().conductorMode).toBe('serial')
+  })
+
+  it('restores the previous mode when the chip write fails', async () => {
+    const controller = chip(ROSTER, undefined, { failModeWrite: 'read-only settings', conductor: 'parallel' })
+    await controller.load()
+
+    await controller.selectConductorMode('serial')
+
+    const state = controller.store.getSnapshot()
+    expect(state.conductorMode).toBe('parallel')
+    expect(state.error).toBe('read-only settings')
+  })
+
+  it('ignores a chip pick of the mode already selected', async () => {
+    const writes: Recorded[] = []
+    const controller = chip(ROSTER, undefined, { writes, conductor: 'serial' })
+    await controller.load()
+
+    await controller.selectConductorMode('serial')
+
+    expect(writes).toEqual([])
+  })
+
+  it('hides the mode when describe is refused on the chip wire', async () => {
+    const controller = chip(ROSTER, undefined, { failDescribe: 'not exposed' })
+
+    await controller.load()
+
+    expect(controller.store.getSnapshot().conductorMode).toBeUndefined()
+  })
+
+  it('tolerates a wire without the settings face: the mode stays hidden', async () => {
+    const api = {
+      agentPresets: {
+        list: () => Promise.resolve({
+          rpcId: 'r',
+          result: { ok: true as const, value: { presets: ROSTER } },
+        }),
+      },
+    } as unknown as IApiClient
+    const controller = new AgentPresetSeatController(api, () => undefined)
+
+    await controller.load()
+
+    expect(controller.store.getSnapshot()).toMatchObject({
+      current: 'standard',
+      conductorMode: undefined,
+      error: null,
+    })
   })
 
   it('reports a refused describe as a failure rather than a half-read row', async () => {

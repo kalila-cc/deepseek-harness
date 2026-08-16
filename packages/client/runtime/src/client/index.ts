@@ -85,7 +85,10 @@ export {
 } from './sessions/conversation.ts'
 export { emptyAssistantBlock } from './sessions/partial.ts'
 export { isTokenDelta } from './sessions/assistant-timing.ts'
-export { contextForm, contextProvenance } from './sessions/context-provenance.ts'
+export {
+  contextForm, contextProvenance, isUserVisibleInterSessionSource,
+  userVisibleInterSessionContent,
+} from './sessions/context-provenance.ts'
 export { displayFailureMessage } from './sessions/failure-display.ts'
 export type {
   ConversationContext, ConversationContextOriginKind,

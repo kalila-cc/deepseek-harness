@@ -1,0 +1,39 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../runtime-diagnostics/invariants"
+    },
+    {
+      "path": "../../conductor/conductor"
+    },
+    {
+      "path": "../../conductor/conductor-round-driver"
+    },
+    {
+      "path": "../../conductor/tool-conductor"
+    },
+    {
+      "path": "../../conductor/tool-task-report"
+    },
+    {
+      "path": "../../core/session"
+    },
+    {
+      "path": "../../util/home-paths"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    }
+  ]
+}

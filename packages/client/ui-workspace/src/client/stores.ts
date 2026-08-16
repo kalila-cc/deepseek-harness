@@ -25,6 +25,8 @@ type WorkspaceViewState = {
   sessionOrderByAccount: Record<string, string[]>
   /** Last observed update timestamps per order account for one-time promotion events. */
   sessionUpdatedAtByAccount: Record<string, Record<string, number>>
+  /** Browser-local child order per parent session; absent in official pre-feature v5 snapshots. */
+  subagentOrderByParent?: Record<string, string[]>
 }
 
 /**
@@ -43,6 +45,7 @@ type WorkspaceViewActions = {
     updatedAt: Record<string, number>,
   ) => void
   setSessionOrder: (draft: WorkspaceViewState, accountKey: string, order: string[]) => void
+  setSubagentOrder: (draft: WorkspaceViewState, parentId: string, order: string[]) => void
 }
 
 /**
@@ -57,6 +60,7 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       groupExpansion: {},
       sessionOrderByAccount: {},
       sessionUpdatedAtByAccount: {},
+      subagentOrderByParent: {},
     }),
     persist: 'dsh.workspace.view.v5',
     actions: {
@@ -81,6 +85,12 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       },
       setSessionOrder: (d, accountKey: string, order: string[]) => {
         d.sessionOrderByAccount[accountKey] = order
+      },
+      setSubagentOrder: (d, parentId: string, order: string[]) => {
+        // Official v5 snapshots predate subagent ordering and rehydrate as a
+        // whole value, so initialize the added field on its first write.
+        d.subagentOrderByParent ??= {}
+        d.subagentOrderByParent[parentId] = order
       },
     },
   })

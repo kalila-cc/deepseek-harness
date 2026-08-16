@@ -30,6 +30,8 @@ Preset files publish one unlocalized `name` and `description`, which Web uses fo
 
 The row re-reads on `settings/changed` for its own namespace and on `connection/reset`: the roster is a live directory and the default is a settings field, so an external edit or a reconnect can both move it.
 
+When the conductor preset is selected, its scheduling preference occupies a second full-width row beneath the preset selector. The explanatory copy and serial/parallel segmented control therefore keep stable reading widths instead of competing with the preset description in one flex line; compact settings surfaces collapse both rows to one column.
+
 ## The management section
 
 A fourth surface, its own settings page (`settings.section` id `agent-presets`, ordered after Models — choosing a model is routine, composing an agent is the deployment-shaping act behind it): the roster as cards, a copy dialog as the only way a preset is created, and a read-only viewer over the shipped compositions.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -24,9 +24,14 @@ const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView 
   workspaceId: wid(id), path: `/projects/${id}`, title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
-const view = (expandedGroups: readonly string[] = [], ungroupedOrder?: readonly string[]) => ({
+const view = (
+  expandedGroups: readonly string[] = [],
+  ungroupedOrder?: readonly string[],
+  subagentOrder?: Record<string, readonly string[]>,
+) => ({
   expandedGroups,
   ...(ungroupedOrder === undefined ? {} : { ungroupedOrder }),
+  ...(subagentOrder === undefined ? {} : { subagentOrder }),
 })
 const noArchive: readonly SessionId[] = []
 const archived = (...ids: string[]): readonly SessionId[] => ids.map(sid)
@@ -108,7 +113,7 @@ describe('deriveGroups', () => {
     expect(search.items[0]?.completed).toBe(true)
   })
 
-  it('hides subagent-origin sessions without hiding ordinary forks', () => {
+  it('nests subagent sessions under their visible parent without hiding ordinary forks', () => {
     const parent = summary('parent', 1)
     const subagent = {
       ...summary('subagent', 3), parentId: parent.id, origin: 'subagent' as const, running: true,
@@ -128,10 +133,16 @@ describe('deriveGroups', () => {
       view(['first']),
     )
 
-    expect(groups[0]!.sessions.map(node => node.id)).toEqual([parent.id, fork.id])
+    // Children ride directly beneath their parent, one indentation level per
+    // subagent hop; an ordinary fork (no subagent origin) stays top-level.
+    expect(groups[0]!.sessions.map(node => [node.id, node.depth])).toEqual([
+      [parent.id, 0], [subagent.id, 1], [grandchild.id, 2], [fork.id, 0], [forkChild.id, 1],
+    ])
+    // The group header counts top-level sessions only.
     expect(groups[0]!.sessionCount).toBe(2)
-    expect(groups[0]!.sessions[0]).toMatchObject({ running: false, runningSubagentCount: 2 })
-    expect(groups[0]!.sessions[1]).toMatchObject({ running: false, runningSubagentCount: 1 })
+    expect(groups[0]!.sessions[0]).toMatchObject({ running: false, runningSubagentCount: 2, depth: 0 })
+    expect(groups[0]!.sessions[1]).toMatchObject({ running: true, runningSubagentCount: 1, depth: 1 })
+    // The flat list keeps every session top-level and hides subagent rows.
     expect(deriveFlat(sessions, noArchive).map(node => [node.id, node.runningSubagentCount])).toEqual([
       [fork.id, 1], [parent.id, 2],
     ])
@@ -139,6 +150,77 @@ describe('deriveGroups', () => {
       sessions, [workspace('first', ['parent', 'fork'])], 'parent', noArchive,
       { items: [], hasMore: false }, 10,
     ).items[0]).toMatchObject({ id: parent.id, runningSubagentCount: 2 })
+  })
+
+  it('renders no subagent rows while its group is folded, and hides archived and blank children', () => {
+    const parent = summary('parent', 1)
+    const runningChild = { ...summary('child', 3), parentId: parent.id, origin: 'subagent' as const }
+    const archivedChild = { ...summary('archived-child', 4), parentId: parent.id, origin: 'subagent' as const }
+    const blankChild = { ...summary('blank-child', 5), parentId: parent.id, origin: 'subagent' as const, blank: true }
+    const sessions = list(parent, runningChild, archivedChild, blankChild)
+
+    // Folded: no rows at all, children included.
+    const folded = deriveGroups(sessions, [workspace('first', ['parent'])], noArchive, view())
+    expect(folded[0]!.sessions).toEqual([])
+
+    // Expanded: the archived child and the non-current blank child stay out.
+    const expanded = deriveGroups(
+      sessions, [workspace('first', ['parent'])], archived('archived-child'), view(['first']),
+    )
+    expect(expanded[0]!.sessions.map(node => [node.id, node.depth])).toEqual([
+      [parent.id, 0], [runningChild.id, 1],
+    ])
+
+    // The current blank child is the only blank shown, like top-level rows.
+    const currentBlank = { ...summary('current-blank', 6), parentId: parent.id, origin: 'subagent' as const, blank: true }
+    const withCurrent = deriveGroups(
+      { ...list(parent, runningChild, currentBlank), current: currentBlank.id },
+      [workspace('first', ['parent'])], noArchive, view(['first']),
+    )
+    expect(withCurrent[0]!.sessions.map(node => node.id)).toEqual([parent.id, runningChild.id, currentBlank.id])
+  })
+
+  it('orders subagent children by the browser-local order and appends unseen children', () => {
+    const parent = summary('parent', 1)
+    const a = { ...summary('a', 3), parentId: parent.id, origin: 'subagent' as const }
+    const b = { ...summary('b', 2), parentId: parent.id, origin: 'subagent' as const }
+    const c = { ...summary('c', 4), parentId: parent.id, origin: 'subagent' as const }
+    const groups = deriveGroups(
+      list(parent, a, b, c),
+      [workspace('first', ['parent'])],
+      noArchive,
+      view(['first'], undefined, { 'parent': [b.id, a.id] }),
+    )
+    // Stored order wins for the children it names; the unseen child trails.
+    expect(groups[0]!.sessions.map(node => [node.id, node.depth])).toEqual([
+      [parent.id, 0], [b.id, 1], [a.id, 1], [c.id, 1],
+    ])
+    // An empty stored order leaves discovery order untouched.
+    const untouched = deriveGroups(
+      list(parent, a, b, c),
+      [workspace('first', ['parent'])],
+      noArchive,
+      view(['first'], undefined, { 'parent': [] }),
+    )
+    expect(untouched[0]!.sessions.map(node => node.id)).toEqual([parent.id, a.id, b.id, c.id])
+    // A stored id whose child vanished (archived or deleted) is skipped.
+    const stale = deriveGroups(
+      list(parent, a, b, c),
+      [workspace('first', ['parent'])],
+      noArchive,
+      view(['first'], undefined, { 'parent': ['gone', b.id, a.id] }),
+    )
+    expect(stale[0]!.sessions.map(node => node.id)).toEqual([parent.id, b.id, a.id, c.id])
+  })
+
+  it('carries subagent children into the ungrouped bucket with their parent', () => {
+    const parent = summary('parent', 1)
+    const child = { ...summary('child', 2), parentId: parent.id, origin: 'subagent' as const }
+    const groups = deriveGroups(list(parent, child), [], noArchive, view([UNGROUPED_KEY]))
+    expect(groups.map(group => group.key)).toEqual([UNGROUPED_KEY])
+    expect(groups[0]!.sessions.map(node => [node.id, node.depth])).toEqual([
+      [parent.id, 0], [child.id, 1],
+    ])
   })
 
   it('ignores fork lineage and sorts every ungrouped session as a top-level row', () => {
@@ -424,6 +506,30 @@ describe('createWorkspaceViewStore', () => {
     expect(snapshot.groupExpansion).toEqual({ '': true, alpha: true })
     expect(snapshot.sessionOrderByAccount).toEqual({ alpha: ['alpha-session'] })
     expect(snapshot.sessionUpdatedAtByAccount).toEqual({ alpha: { 'alpha-session': 2 } })
+  })
+
+  it('adds subagent order to an official v5 snapshot that predates the field', () => {
+    const persisted = JSON.stringify({
+      groupBy: 'workspace',
+      orderBy: 'updated',
+      groupExpansion: {},
+      sessionOrderByAccount: {},
+      sessionUpdatedAtByAccount: {},
+    })
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => key === 'dsh.workspace.view.v5' ? persisted : null,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    try {
+      const store = createWorkspaceViewStore().create()
+      store.actions.setSubagentOrder('parent', ['child-b', 'child-a'])
+      expect(store.getSnapshot().subagentOrderByParent).toEqual({
+        parent: ['child-b', 'child-a'],
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
