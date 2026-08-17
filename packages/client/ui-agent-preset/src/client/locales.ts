@@ -31,9 +31,9 @@ export const en: Record<AgentPresetSettingsKey, string> = {
   modeTitle: 'Scheduling mode',
   modeHint: 'How the conductor schedules subtasks for conductor sessions you start from now on.',
   serial: 'Serial',
-  serialDescription: 'Runs one ready subtask at a time, keeping the conductor less interrupted and progress more stable.',
+  serialDescription: 'Serial: Runs one ready subtask at a time, keeping the conductor less interrupted and progress more stable. / 串行: 一次只执行一个就绪子任务，协调者较少被打断，推进更稳定。',
   parallel: 'Parallel',
-  parallelDescription: 'Runs independent ready subtasks together for faster progress, but consumes tokens more quickly.',
+  parallelDescription: 'Parallel: Runs independent ready subtasks together for faster progress, but consumes tokens more quickly. / 并行: 同时执行多个互不依赖的就绪子任务，推进更快，但 Token 消耗更快。',
   nav: 'Agent presets',
   sectionIntro:
     'A preset is the plugin composition one session\'s agent runs — its tools, prompt, and capabilities. '
@@ -103,9 +103,9 @@ export const zh: Record<AgentPresetSettingsKey, string> = {
   modeTitle: '调度模式',
   modeHint: '指挥家如何调度子任务，对此后新建的指挥家会话生效。',
   serial: '串行',
-  serialDescription: '一次只执行一个就绪子任务，协调者较少被打断，推进相对稳定。',
+  serialDescription: '串行 (Serial): 一次只执行一个就绪子任务，协调者较少被打断，推进相对稳定。/ Serial: Runs one ready subtask at a time, keeping the conductor less interrupted and progress more stable.',
   parallel: '并行',
-  parallelDescription: '同时执行多个互不依赖的就绪子任务，推进更快，但 Token 消耗也更快。',
+  parallelDescription: '并行 (Parallel): 同时执行多个互不依赖的就绪子任务，推进更快，但 Token 消耗也更快。/ Parallel: Runs independent ready subtasks together for faster progress, but consumes tokens more quickly.',
   nav: 'Agent 预设',
   sectionIntro: '预设即一个会话的 Agent 所运行的插件组装 —— 它的工具、提示词与能力。复制一份既有预设改成自己的，或用「创造模式」让 Agent 帮你创建。',
   builtIn: '内置',

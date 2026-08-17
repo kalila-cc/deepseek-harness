@@ -92,16 +92,24 @@ export function AgentPresetRow({ load, select, selectConductorMode, useAgentPres
           <div className={css.modeButtons} role="group" aria-label={t('modeTitle')}>
             <button
               type="button"
-              className={state.conductorMode === 'serial' ? css.modeActive : css.modeButton}
+              aria-label={t('serial')}
+              className={state.conductorMode === 'serial' ? `${css.modeChoice} ${css.modeActive}` : css.modeChoice}
               disabled={busy || !state.writable}
               onClick={() => { void selectConductorMode('serial') }}
-            >{t('serial')}</button>
+            >
+              <span className={css.modeChoiceName}>{t('serial')}</span>
+              <span className={css.modeChoiceDescription}>{t('serialDescription')}</span>
+            </button>
             <button
               type="button"
-              className={state.conductorMode === 'parallel' ? css.modeActive : css.modeButton}
+              aria-label={t('parallel')}
+              className={state.conductorMode === 'parallel' ? `${css.modeChoice} ${css.modeActive}` : css.modeChoice}
               disabled={busy || !state.writable}
               onClick={() => { void selectConductorMode('parallel') }}
-            >{t('parallel')}</button>
+            >
+              <span className={css.modeChoiceName}>{t('parallel')}</span>
+              <span className={css.modeChoiceDescription}>{t('parallelDescription')}</span>
+            </button>
           </div>
         </div>
       )}

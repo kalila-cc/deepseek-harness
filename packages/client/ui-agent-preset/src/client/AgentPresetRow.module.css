@@ -112,18 +112,13 @@
   background: var(--dsw-alias-bg-module-platform);
 }
 
-.modeButton,
+.modeChoice,
 .modeActive {
-  height: 28px;
-  min-width: 54px;
-  padding: 0 13px;
   border: none;
   border-radius: 6px;
   background: transparent;
   font: inherit;
   font-size: 13px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-primary);
   cursor: pointer;
   transition: background-color 160ms ease, transform 160ms ease;
 }
@@ -133,16 +128,43 @@
   color: var(--dsw-alias-interactive-label-primary);
 }
 
-.modeButton:hover:not(:disabled) {
+.modeActive .modeChoiceName,
+.modeActive .modeChoiceDescription {
+  color: var(--dsw-alias-interactive-label-primary);
+}
+
+.modeChoice {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 188px;
+  height: auto;
+  padding: 9px 13px;
+  gap: 2px;
+}
+
+.modeChoiceName {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.modeChoiceDescription {
+  font-size: 11px;
+  line-height: 16px;
+  white-space: normal;
+  color: var(--dsw-alias-label-caption);
+}
+
+.modeChoice:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.modeButton:active:not(:disabled),
-.modeActive:active:not(:disabled) {
+.modeChoice:active:not(:disabled) {
   transform: translateY(1px);
 }
 
-.modeButton:disabled,
 .modeActive:disabled {
   cursor: default;
   opacity: 0.6;
